@@ -198,6 +198,11 @@ if [ -d "$APP_DIR/app" ]; then
     rm -rf "$APP_DIR/app"
 fi
 
+if [ -d "$APP_DIR/node_modules" ]; then
+    print_warning "Директория $APP_DIR/node_modules уже существует. Очищаем..."
+    rm -rf "$APP_DIR/node_modules"
+fi
+
 # Установка Node.js 18.x LTS (требуется для wg-easy)
 print_step "Установка Node.js 18.x LTS (требуется для wg-easy)"
 apt remove -y nodejs npm
@@ -223,9 +228,9 @@ AVAILABLE_TAGS=$(sudo -u "$WG_USER" env HOME="/var/lib/$WG_USER" git tag -l 2>/d
 echo -e "${CYAN}Доступные ветки:${NC} $AVAILABLE_BRANCHES"
 echo -e "${CYAN}Доступные теги:${NC} $AVAILABLE_TAGS"
 
-# Выбор версии v14.0.0 (стабильная версия с полным package-lock.json)
+# Выбор версии v14.0.0 (стабильная версия)
 if sudo -u "$WG_USER" env HOME="/var/lib/$WG_USER" git show-ref --tags v14.0.0 &>/dev/null; then
-    print_success "Стабильный тег v14.0.0 найден (с package-lock.json)"
+    print_success "Стабильный тег v14.0.0 найден"
     sudo -u "$WG_USER" env HOME="/var/lib/$WG_USER" git checkout v14.0.0
 else
     print_error "Тег v14.0.0 не найден. Проверьте доступные теги."
@@ -242,7 +247,7 @@ if [ -d "src" ]; then
     # Копирование файлов из src
     sudo -u "$WG_USER" cp -r src/* "$APP_DIR/app/"
     
-    # Копирование package.json и package-lock.json
+    # Копирование package.json и package-lock.json из корня репозитория
     sudo -u "$WG_USER" cp package.json package-lock.json "$APP_DIR/app/" 2>/dev/null || true
     
     # Установка зависимостей
@@ -254,26 +259,33 @@ if [ -d "src" ]; then
     
     print_success "Зависимости установлены для классической структуры"
     
-    # Создание директории node_modules в родительской папке (официальный метод)
-    print_step "Создание директории node_modules в родительской папке..."
-    sudo -u "$WG_USER" mkdir -p "$APP_DIR/node_modules"
-    
-    # Копирование node_modules (официальный метод для v14.0.0)
+    # Проверка, где находится node_modules
+    print_step "Проверка расположения node_modules..."
     if [ -d "node_modules" ]; then
-        sudo -u "$WG_USER" cp -r node_modules/* "$APP_DIR/node_modules/"
-        print_success "node_modules скопированы в $APP_DIR/node_modules/"
-    else
-        print_warning "node_modules не найдены в текущей директории. Проверяем структуру..."
+        print_success "node_modules найдены в $APP_DIR/app/node_modules"
         
-        # Альтернативный метод - копирование из app директории
-        if [ -d "$APP_DIR/app/node_modules" ]; then
-            sudo -u "$WG_USER" cp -r "$APP_DIR/app/node_modules"/* "$APP_DIR/node_modules/"
-            print_success "node_modules скопированы из app директории"
+        # Создание директории node_modules в родительской папке (официальный метод)
+        sudo -u "$WG_USER" mkdir -p "$APP_DIR/node_modules"
+        
+        # Копирование node_modules в родительскую директорию
+        sudo -u "$WG_USER" cp -r node_modules/* "$APP_DIR/node_modules/"
+        print_success "node_modules успешно скопированы в $APP_DIR/node_modules/"
+    else
+        print_warning "node_modules не найдены в $APP_DIR/app. Ищем в других местах..."
+        
+        # Поиск node_modules в других возможных местах
+        if [ -d "$APP_DIR/repo/node_modules" ]; then
+            sudo -u "$WG_USER" mkdir -p "$APP_DIR/node_modules"
+            sudo -u "$WG_USER" cp -r "$APP_DIR/repo/node_modules"/* "$APP_DIR/node_modules/"
+            print_success "node_modules скопированы из $APP_DIR/repo/node_modules"
+        elif [ -d "$APP_DIR/repo/src/node_modules" ]; then
+            sudo -u "$WG_USER" mkdir -p "$APP_DIR/node_modules"
+            sudo -u "$WG_USER" cp -r "$APP_DIR/repo/src/node_modules"/* "$APP_DIR/node_modules/"
+            print_success "node_modules скопированы из $APP_DIR/repo/src/node_modules"
         else
-            print_error "node_modules не найдены ни в одном месте. Проверьте установку зависимостей."
+            print_error "node_modules не найдены ни в одном месте. Установка зависимостей не удалась."
         fi
     fi
-
 else
     print_error "Не удалось определить структуру репозитория. Ожидалась директория 'src'"
 fi
@@ -304,13 +316,17 @@ print_success ".env файл создан с русским языком"
 if [ ! -d "$APP_DIR/node_modules" ] || [ -z "$(ls -A "$APP_DIR/node_modules" 2>/dev/null)" ]; then
     print_warning "node_modules директория пуста или отсутствует. Выполняем повторную установку..."
     cd "$APP_DIR/app"
-    sudo -u "$WG_USER" env HOME="/var/lib/$WG_USER" npm install --force --omit=dev
-    sudo -u "$WG_USER" mkdir -p "$APP_DIR/node_modules"
+    
+    # Полная переустановка зависимостей
+    sudo -u "$WG_USER" env HOME="/var/lib/$WG_USER" npm install --force
+    
+    # Повторное копирование node_modules
     if [ -d "node_modules" ]; then
+        sudo -u "$WG_USER" mkdir -p "$APP_DIR/node_modules"
         sudo -u "$WG_USER" cp -r node_modules/* "$APP_DIR/node_modules/"
-        print_success "node_modules успешно установлены и скопированы"
+        print_success "node_modules успешно установлены и скопированы при повторной попытке"
     else
-        print_error "Не удалось установить node_modules. Проверьте логи npm."
+        print_error "Не удалось установить node_modules даже при повторной попытке. Проверьте логи npm."
     fi
 fi
 
