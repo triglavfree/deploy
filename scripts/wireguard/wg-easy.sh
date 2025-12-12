@@ -20,11 +20,10 @@ fi
 
 DOMAIN="$1"
 EMAIL="admin@$DOMAIN"
-APP_DIR="/opt/wg-easy"
-WG_USER="wg-easy"
+APP_DIR="/etc/containers/volumes/wg-easy"
 
 echo -e "${PURPLE}==================================================${NC}"
-echo -e "${CYAN}WG-EASY + CADDY УСТАНОВКА (ОФИЦИАЛЬНЫЙ МЕТОД)${NC}"
+echo -e "${CYAN}WG-EASY + CADDY УСТАНОВКА (ОФИЦИАЛЬНЫЙ МЕТОД PODMAN)${NC}"
 echo -e "${YELLOW}Домен: ${GREEN}$DOMAIN${NC}"
 echo -e "${YELLOW}Email для Let's Encrypt: ${GREEN}$EMAIL${NC}"
 echo -e "${PURPLE}==================================================${NC}"
@@ -72,43 +71,20 @@ function print_error() {
 # =============== ШАГ 1: ОБНОВЛЕНИЕ СИСТЕМЫ ===============
 print_step "Шаг 1: Обновление системы и установка базовых пакетов"
 apt update && apt upgrade -y
-apt install -y curl wget gnupg lsb-release ca-certificates net-tools ufw fail2ban unzip git
-print_success "Система обновлена"
+apt install -y curl wget gnupg lsb-release ca-certificates net-tools ufw fail2ban unzip git podman
+print_success "Система обновлена и Podman установлен"
 
 # =============== ШАГ 2: СИСТЕМНЫЕ ОПТИМИЗАЦИИ ===============
 print_step "Шаг 2: Системные оптимизации для слабого VPS"
 
-# 2.1. Настройка ядра для WireGuard (официальный метод)
-print_step "Настройка ядра для WireGuard"
-cat >> /etc/sysctl.conf <<EOF
-net.ipv4.ip_forward=1
-net.ipv4.conf.all.src_valid_mark=1
-net.ipv6.conf.all.disable_ipv6=0
-net.ipv6.conf.all.forwarding=1
-net.ipv6.conf.default.forwarding=1
-EOF
-
-# 2.2. Включение BBR
+# 2.1. Включение BBR
+print_step "Включение BBR (TCP BBR congestion control)"
 echo "net.core.default_qdisc=fq" >> /etc/sysctl.conf
 echo "net.ipv4.tcp_congestion_control=bbr" >> /etc/sysctl.conf
-
-# 2.3. Сетевая оптимизация
-cat >> /etc/sysctl.conf <<EOF
-net.core.rmem_max=16777216
-net.core.wmem_max=16777216
-net.ipv4.tcp_rmem=4096 87380 16777216
-net.ipv4.tcp_wmem=4096 65536 16777216
-net.core.netdev_max_backlog=30000
-net.ipv4.tcp_notsent_lowat=16384
-net.ipv4.tcp_no_metrics_save=1
-net.ipv4.tcp_fastopen=3
-net.ipv4.tcp_slow_start_after_idle=0
-EOF
-
 sysctl -p
-print_success "Ядро настроено для WireGuard и оптимизировано"
+print_success "BBR включен"
 
-# 2.4. Создание swap файла 2GB
+# 2.2. Создание swap файла 2GB
 print_step "Создание swap файла 2GB"
 if [ ! -f /swapfile ]; then
     fallocate -l 2G /swapfile
@@ -125,7 +101,7 @@ else
     print_warning "Swap файл уже существует"
 fi
 
-# 2.5. Оптимизация NVMe/SSD
+# 2.3. Оптимизация NVMe/SSD
 print_step "Оптимизация NVMe/SSD"
 ROOT_DEVICE=$(df / --output=source | tail -1 | sed 's/\/dev\///' | sed 's/[0-9]*$//')
 if [ -f /sys/block/"$ROOT_DEVICE"/queue/scheduler ]; then
@@ -138,222 +114,142 @@ else
     print_warning "Не удалось оптимизировать NVMe/SSD (устройство не найдено)"
 fi
 
-# =============== ШАГ 3: УСТАНОВКА WIREGUARD ===============
-print_step "Шаг 3: Установка WireGuard"
-apt install -y wireguard qrencode
+# 2.4. Сетевая оптимизация IPv4
+print_step "Сетевая оптимизация IPv4"
+cat >> /etc/sysctl.conf <<EOF
+net.core.rmem_max=16777216
+net.core.wmem_max=16777216
+net.ipv4.tcp_rmem=4096 87380 16777216
+net.ipv4.tcp_wmem=4096 65536 16777216
+net.core.netdev_max_backlog=30000
+net.ipv4.tcp_congestion_control=bbr
+net.ipv4.tcp_notsent_lowat=16384
+net.ipv4.tcp_no_metrics_save=1
+net.ipv4.tcp_fastopen=3
+net.ipv4.tcp_slow_start_after_idle=0
+net.ipv4.ip_forward=1
+net.ipv4.conf.all.forwarding=1
+net.ipv4.conf.default.forwarding=1
+net.ipv6.conf.all.forwarding=1
+net.ipv6.conf.default.forwarding=1
+net.ipv4.conf.all.src_valid_mark=1
+EOF
+sysctl -p
+print_success "Сетевая оптимизация применена"
 
-# Загрузка модулей ядра
-modprobe wireguard
-modprobe nf_nat
-modprobe nf_conntrack
+# =============== ШАГ 3: ЗАГРУЗКА МОДУЛЕЙ ЯДРА ===============
+print_step "Шаг 3: Настройка модулей ядра для WireGuard и nftables"
 
-# Автозагрузка модулей при старте
-cat > /etc/modules-load.d/wireguard.conf <<EOF
+# 3.1. Модули для WireGuard и nftables
+cat > /etc/modules-load.d/wg-easy.conf <<EOF
 wireguard
-nf_nat
-nf_conntrack
+nft_masq
+nft_nat
+nft_filter
 EOF
 
-print_success "WireGuard установлен"
+# 3.2. Загрузка модулей
+modprobe wireguard
+modprobe nft_masq
+modprobe nft_nat
+modprobe nft_filter
 
-# =============== ШАГ 4: УСТАНОВКА NODE.JS ===============
-print_step "Шаг 4: Установка Node.js 20.x"
-curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg
-echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" | tee /etc/apt/sources.list.d/nodesource.list
-apt update && apt install -y nodejs
-npm install -g npm@latest
-print_success "Node.js 20.x установлен"
+print_success "Модули ядра настроены и загружены"
 
-# =============== ШАГ 5: УСТАНОВКА WG-EASY (ОФИЦИАЛЬНЫЙ МЕТОД) ===============
-print_step "Шаг 5: Установка wg-easy (официальный метод)"
+# =============== ШАГ 4: НАСТРОЙКА PODMAN ДЛЯ WG-EASY ===============
+print_step "Шаг 4: Настройка Podman для wg-easy"
 
-# Создание пользователя для wg-easy с домашней директорией
-if ! id -u "$WG_USER" &>/dev/null; then
-    useradd -r -m -d "/var/lib/$WG_USER" -s /bin/false "$WG_USER"
-    print_success "Пользователь $WG_USER создан с домашней директорией"
-else
-    if [ ! -d "/var/lib/$WG_USER" ]; then
-        mkdir -p "/var/lib/$WG_USER"
-        chown "$WG_USER:$WG_USER" "/var/lib/$WG_USER"
-        usermod -d "/var/lib/$WG_USER" "$WG_USER"
-        print_success "Создана домашняя директория для существующего пользователя $WG_USER"
-    fi
-fi
+# 4.1. Создание директорий для конфигурации
+print_step "Создание директорий для конфигурации Podman"
+mkdir -p /etc/containers/systemd/wg-easy
+mkdir -p /etc/containers/volumes/wg-easy
+mkdir -p /etc/containers/volumes/wg-easy/config
+chown -R root:root /etc/containers/volumes/wg-easy
+chmod -R 700 /etc/containers/volumes/wg-easy
+print_success "Директории созданы"
 
-chown "$WG_USER:$WG_USER" "/var/lib/$WG_USER"
-chmod 700 "/var/lib/$WG_USER"
-
-# Создание базовой директории
-mkdir -p "$APP_DIR"
-chown "$WG_USER:$WG_USER" "$APP_DIR"
-
-# Очистка существующих директорий
-for dir in repo app node_modules; do
-    if [ -d "$APP_DIR/$dir" ]; then
-        print_warning "Директория $APP_DIR/$dir уже существует. Очищаем..."
-        rm -rf "$APP_DIR/$dir"
-    fi
-done
-
-# Установка Node.js 18.x LTS
-print_step "Установка Node.js 18.x LTS (требуется для wg-easy)"
-apt remove -y nodejs npm
-curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg
-echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_18.x nodistro main" | tee /etc/apt/sources.list.d/nodesource.list
-apt update && apt install -y nodejs
-npm install -g npm@9.6.7
-print_success "Node.js 18.x LTS установлен"
-
-# Клонирование репозитория
-print_step "Клонирование репозитория wg-easy..."
-sudo -u "$WG_USER" env HOME="/var/lib/$WG_USER" git clone https://github.com/wg-easy/wg-easy "$APP_DIR/repo"
-cd "$APP_DIR/repo"
-
-# Настройка безопасного доступа к репозиторию
-sudo -u "$WG_USER" env HOME="/var/lib/$WG_USER" git config --global --add safe.directory "$APP_DIR/repo"
-
-# Проверка доступных версий
-print_step "Проверка доступных версий..."
-AVAILABLE_TAGS=$(sudo -u "$WG_USER" env HOME="/var/lib/$WG_USER" git tag -l | grep -E 'v1[4-5]' || true)
-echo -e "${CYAN}Доступные теги:${NC} $AVAILABLE_TAGS"
-
-# Используем v14.0.0 как стабильную версию
-print_step "Переключение на стабильную версию v14.0.0..."
-sudo -u "$WG_USER" env HOME="/var/lib/$WG_USER" git checkout v14.0.0
-print_success "Версия v14.0.0 успешно выбрана"
-
-# === СЛЕДУЕМ ОФИЦИАЛЬНОЙ ДОКУМЕНТАЦИИ ===
-print_step "Создание директории /app (официальный метод)..."
-sudo -u "$WG_USER" mkdir -p "$APP_DIR/app"
-
-print_step "Копирование файлов из src в /app..."
-sudo -u "$WG_USER" cp -r src/* "$APP_DIR/app/"
-
-print_step "Копирование package.json и package-lock.json в /app..."
-sudo -u "$WG_USER" cp package.json package-lock.json "$APP_DIR/app/" 2>/dev/null || true
-
-# Проверка наличия package.json
-if [ ! -f "$APP_DIR/app/package.json" ]; then
-    print_error "package.json не найден в $APP_DIR/app/. Проверьте структуру репозитория."
-fi
-
-# Установка зависимостей
-cd "$APP_DIR/app"
-print_step "Установка зависимостей (npm install --omit=dev)..."
-sudo -u "$WG_USER" env HOME="/var/lib/$WG_USER" npm install --omit=dev
-print_success "Зависимости успешно установлены"
-
-# Проверка создания node_modules
-if [ -d "node_modules" ]; then
-    print_success "node_modules успешно созданы в $APP_DIR/app/node_modules"
-    
-    # Создание директории node_modules в родительской папке
-    print_step "Создание директории node_modules в родительской папке (/opt/wg-easy/node_modules)..."
-    sudo -u "$WG_USER" mkdir -p "$APP_DIR/node_modules"
-    
-    # Копирование node_modules в родительскую директорию (официальный метод)
-    print_step "Копирование node_modules в родительскую директорию..."
-    sudo -u "$WG_USER" cp -r node_modules/* "$APP_DIR/node_modules/"
-    print_success "node_modules успешно скопированы в $APP_DIR/node_modules"
-else
-    print_error "node_modules не созданы. Установка зависимостей завершилась с ошибкой."
-fi
-
-# Генерация случайного пароля
-RANDOM_PASSWORD=$(tr -dc A-Za-z0-9 </dev/urandom | head -c 16)
-
-# Создание .env файла
-cat > "$APP_DIR/app/.env" <<EOF
-PORT=51821
-WEBUI_HOST=0.0.0.0
-PASSWORD=$RANDOM_PASSWORD
-WG_HOST=${DOMAIN%%.*}
-WG_PORT=51820
-WG_DEFAULT_ADDRESS=10.8.0.x
-WG_DEFAULT_DNS=1.1.1.1,8.8.8.8
-WG_MTU=1420
-WG_PERSISTENT_KEEPALIVE=25
-LANG=ru
-UI_TRAFFIC_STATS=true
-UI_CHART_TYPE=bar
+# 4.2. Создание файла конфигурации контейнера
+print_step "Создание конфигурации контейнера wg-easy"
+cat > /etc/containers/systemd/wg-easy/wg-easy.container <<EOF
+[Container]
+ContainerName=wg-easy
+Image=ghcr.io/wg-easy/wg-easy:15
+AutoUpdate=registry
+Volume=/etc/containers/volumes/wg-easy:/etc/wireguard:Z
+Network=wg-easy.network
+PublishPort=51820:51820/udp
+PublishPort=51821:51821/tcp
+AddCapability=NET_ADMIN
+AddCapability=SYS_MODULE
+AddCapability=NET_RAW
+Sysctl=net.ipv4.ip_forward=1
+Sysctl=net.ipv4.conf.all.src_valid_mark=1
+Sysctl=net.ipv6.conf.all.disable_ipv6=0
+Sysctl=net.ipv6.conf.all.forwarding=1
+Sysctl=net.ipv6.conf.default.forwarding=1
+Environment=PORT=51821
+Environment=WEBUI_HOST=0.0.0.0
+Environment=LANG=ru
+[Install]
+WantedBy=default.target
 EOF
+print_success "Конфигурация контейнера создана"
 
-chown "$WG_USER:$WG_USER" "$APP_DIR/app/.env"
-chmod 644 "$APP_DIR/app/.env"
-print_success ".env файл создан с русским языком"
+# 4.3. Создание файла конфигурации сети
+print_step "Создание конфигурации сети Podman"
+cat > /etc/containers/systemd/wg-easy/wg-easy.network <<EOF
+[Network]
+NetworkName=wg-easy
+IPv6=true
+EOF
+print_success "Конфигурация сети создана"
 
-# Проверка целостности установки
-print_step "Проверка целостности установки..."
-if [ ! -f "$APP_DIR/app/index.js" ]; then
-    print_warning "index.js не найден в $APP_DIR/app/. Ищем альтернативные точки входа..."
-    find "$APP_DIR/app" -name "*.js" -type f 2>/dev/null | head -5
-fi
-
-if [ ! -d "$APP_DIR/node_modules" ] || [ -z "$(ls -A "$APP_DIR/node_modules" 2>/dev/null)" ]; then
-    print_warning "node_modules директория пуста или отсутствует. Выполняем диагностику..."
-    
-    # Диагностика проблем с npm
-    print_step "Диагностика npm..."
-    echo -e "${CYAN}Версия npm:${NC} $(npm -v)"
-    echo -e "${CYAN}Версия node:${NC} $(node -v)"
-    echo -e "${CYAN}Текущая директория:${NC} $(pwd)"
-    echo -e "${CYAN}Содержимое package.json:${NC}"
-    cat package.json 2>/dev/null || echo "package.json не найден"
-    
-    # Повторная попытка установки с подробным логированием
-    print_step "Повторная установка с подробным логированием..."
-    sudo -u "$WG_USER" env HOME="/var/lib/$WG_USER" npm install --omit=dev --verbose 2>&1 | tee /tmp/npm_install.log
-    
-    if [ -d "node_modules" ]; then
-        sudo -u "$WG_USER" mkdir -p "$APP_DIR/node_modules"
-        sudo -u "$WG_USER" cp -r node_modules/* "$APP_DIR/node_modules/"
-        print_success "node_modules успешно установлены при повторной попытке"
-    else
-        print_error "Критическая ошибка: не удалось создать node_modules даже при повторной установке. Проверьте логи в /tmp/npm_install.log"
-    fi
-else
-    print_success "Установка wg-easy завершена успешно!"
-fi
-
-# =============== ШАГ 6: SYSTEMD СЕРВИС (ОФИЦИАЛЬНЫЙ ШАБЛОН) ===============
-print_step "Шаг 6: Настройка systemd сервиса (официальный шаблон)"
-
-# Загрузка официального шаблона сервиса
-curl -sLo /etc/systemd/system/wg-easy.service https://raw.githubusercontent.com/wg-easy/wg-easy/main/wg-easy.service
-
-# Модификация шаблона под нашу конфигурацию
-sed -i "s|/path/to/wireguard-easy|$APP_DIR/app|g" /etc/systemd/system/wg-easy.service
-sed -i "s|user = .*|user = $WG_USER|g" /etc/systemd/system/wg-easy.service
-sed -i "s|group = .*|group = $WG_USER|g" /etc/systemd/system/wg-easy.service
-sed -i "s|Environment=PORT=.*|Environment=PORT=51821|g" /etc/systemd/system/wg-easy.service
-sed -i "s|Environment=WEBUI_HOST=.*|Environment=WEBUI_HOST=0.0.0.0|g" /etc/systemd/system/wg-easy.service
-sed -i "s|EnvironmentFile=.*|EnvironmentFile=$APP_DIR/app/.env|g" /etc/systemd/system/wg-easy.service
-
-# Замена всех оставшихся 'REPLACEME' на реальные пути
-sed -i "s|REPLACEME|$APP_DIR|g" /etc/systemd/system/wg-easy.service
-
-# Перезагрузка systemd и запуск сервиса
+# 4.4. Перезагрузка systemd и запуск контейнера
+print_step "Запуск контейнера wg-easy через systemd"
 systemctl daemon-reload
-systemctl enable wg-easy
-systemctl start wg-easy
+systemctl enable --now podman
+systemctl daemon-reload
+systemctl enable --now wg-easy
+
+# Ждем запуска контейнера
+sleep 10
 
 # Проверка статуса
-sleep 5
-if systemctl is-active --quiet wg-easy; then
-    print_success "wg-easy сервис запущен успешно"
+if podman ps --format "{{.Names}}" | grep -q "wg-easy"; then
+    print_success "Контейнер wg-easy успешно запущен"
 else
-    print_error "wg-easy сервис не запустился. Проверьте журналы: journalctl -u wg-easy -f"
+    print_error "Контейнер wg-easy не запустился. Проверьте журналы: journalctl -u wg-easy -f"
 fi
 
-# =============== ШАГ 7: УСТАНОВКА CADDY ===============
-print_step "Шаг 7: Установка Caddy как reverse proxy"
+# =============== ШАГ 5: НАСТРОЙКА HOOKS ДЛЯ NF.TABLES ===============
+print_step "Шаг 5: Настройка nftables hooks для WireGuard"
 
+# 5.1. Создание hooks через API wg-easy (временное решение)
+# В реальном сценарии hooks настраиваются через веб-интерфейс, но для автоматизации:
+print_warning "Для полной настройки nftables необходимо вручную добавить hooks в веб-интерфейсе wg-easy"
+echo -e "${CYAN}PostUp hook:${NC}"
+echo -e "nft add table inet wg_table; nft add chain inet wg_table prerouting { type nat hook prerouting priority 100 \; }; nft add chain inet wg_table postrouting { type nat hook postrouting priority 100 \; }; nft add rule inet wg_table postrouting ip saddr 10.8.0.0/24 oifname eth0 masquerade; nft add chain inet wg_table input { type filter hook input priority 0 \; policy accept \; }; nft add rule inet wg_table input udp dport 51820 accept; nft add rule inet wg_table input tcp dport 51821 accept; nft add chain inet wg_table forward { type filter hook forward priority 0 \; policy accept \; }; nft add rule inet wg_table forward iifname \"wg0\" accept; nft add rule inet wg_table forward oifname \"wg0\" accept;"
+
+echo -e "${CYAN}PostDown hook:${NC}"
+echo -e "nft delete table inet wg_table"
+
+# 5.2. Перезапуск контейнера для применения настроек
+print_step "Перезапуск контейнера для применения настроек"
+systemctl restart wg-easy
+sleep 5
+print_success "Контейнер перезапущен"
+
+# =============== ШАГ 6: УСТАНОВКА CADDY ===============
+print_step "Шаг 6: Установка Caddy как reverse proxy"
+
+# 6.1. Добавление репозитория Caddy
 apt install -y debian-keyring debian-archive-keyring apt-transport-https
 curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
 curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | tee /etc/apt/sources.list.d/caddy-stable.list
 apt update && apt install -y caddy
 
-# Настройка Caddyfile
+# 6.2. Настройка Caddyfile для reverse proxy
+print_step "Настройка Caddyfile для reverse proxy к wg-easy"
 cat > /etc/caddy/Caddyfile <<EOF
 {
     email $EMAIL
@@ -361,7 +257,7 @@ cat > /etc/caddy/Caddyfile <<EOF
 }
 
 $DOMAIN {
-    reverse_proxy localhost:51821
+    reverse_proxy wg-easy:51821
     tls {
         protocols tls1.2 tls1.3
     }
@@ -376,19 +272,17 @@ $DOMAIN {
 }
 EOF
 
-# Создание директории для логов
+# 6.3. Настройка прав для Caddy
 mkdir -p /var/log/caddy
 chown -R caddy:caddy /var/log/caddy
 
-systemctl enable caddy
+# 6.4. Перезапуск Caddy
+systemctl enable --now caddy
 systemctl restart caddy
-
 print_success "Caddy установлен и настроен как reverse proxy"
 
-# =============== ШАГ 8: НАСТРОЙКА БЕЗОПАСНОСТИ ===============
-print_step "Шаг 8: Настройка безопасности (UFW + Fail2Ban)"
-
-# 8.1. Настройка UFW
+# =============== ШАГ 7: НАСТРОЙКА БРАНДМАУЭРА UFW ===============
+print_step "Шаг 7: Настройка брандмауэра UFW"
 ufw default deny incoming
 ufw default allow outgoing
 ufw allow ssh comment "SSH Access"
@@ -398,7 +292,8 @@ ufw allow 51820/udp comment "WireGuard VPN"
 ufw --force enable
 print_success "UFW настроен"
 
-# 8.2. Настройка Fail2Ban
+# =============== ШАГ 8: НАСТРОЙКА FAIL2BAN ===============
+print_step "Шаг 8: Настройка Fail2Ban"
 cat > /etc/fail2ban/jail.local <<EOF
 [sshd]
 enabled = true
@@ -428,96 +323,55 @@ EOF
 systemctl restart fail2ban
 print_success "Fail2Ban настроен"
 
-# =============== ШАГ 9: NF.TABLES ДЛЯ NAT ===============
-print_step "Шаг 9: Настройка nftables для NAT"
-
-apt install -y nftables
-systemctl enable nftables
-
-# Базовая конфигурация nftables для WireGuard
-cat > /etc/nftables.conf <<EOF
-#!/usr/sbin/nft -f
-flush ruleset
-
-table inet filter {
-    chain input {
-        type filter hook input priority 0; policy drop;
-        ct state established,related accept
-        iif lo accept
-        icmp type echo-request limit rate 5/second accept
-        icmp type { echo-reply, destination-unreachable, time-exceeded, parameter-problem } accept
-        tcp dport 22 accept
-        tcp dport {80, 443} accept
-        udp dport 51820 accept
-    }
-    
-    chain forward {
-        type filter hook forward priority 0; policy drop;
-        iifname wg0 accept
-        oifname wg0 accept
-        ct state established,related accept
-    }
-}
-
-table inet nat {
-    chain postrouting {
-        type nat hook postrouting priority 100; policy accept;
-        oifname != wg0 ip saddr 10.8.0.0/24 masquerade
-    }
-}
-EOF
-
-systemctl restart nftables
-print_success "nftables настроен для WireGuard NAT"
-
-# =============== ШАГ 10: ФИНАЛЬНАЯ ПРОВЕРКА ===============
-print_step "Шаг 10: Финальная проверка"
+# =============== ШАГ 9: ФИНАЛЬНАЯ ПРОВЕРКА ===============
+print_step "Шаг 9: Финальная проверка"
 
 echo -e "${CYAN}Проверка запущенных сервисов:${NC}"
 systemctl is-active --quiet wg-easy && echo -e "${GREEN}✓ wg-easy service is running${NC}"
 systemctl is-active --quiet caddy && echo -e "${GREEN}✓ caddy service is running${NC}"
 systemctl is-active --quiet fail2ban && echo -e "${GREEN}✓ fail2ban service is running${NC}"
-systemctl is-active --quiet nftables && echo -e "${GREEN}✓ nftables service is running${NC}"
+podman ps --format "{{.Names}}\t{{.Status}}" | grep wg-easy && echo -e "${GREEN}✓ wg-easy container is running${NC}"
 
 # Проверка портов
 echo -e "${CYAN}Проверка открытых портов:${NC}"
 ss -tulpn | grep -E ':(22|80|443|51820|51821)' || true
 
-# =============== ФИНАЛЬНАЯ ИНФОРМАЦИЯ ===============
+# =============== ШАГ 10: ГЕНЕРАЦИЯ ПАРОЛЯ И ФИНАЛЬНАЯ ИНФОРМАЦИЯ ===============
+print_step "Шаг 10: Генерация пароля и финальная информация"
+
+# Генерация случайного пароля для wg-easy
+RANDOM_PASSWORD=$(tr -dc A-Za-z0-9 </dev/urandom | head -c 16)
+
+# Вывод финальной информации
 echo -e "${PURPLE}==================================================${NC}"
-echo -e "${GREEN}WG-EASY УСТАНОВЛЕН УСПЕШНО!${NC}"
+echo -e "${GREEN}WG-EASY + CADDY УСТАНОВЛЕН УСПЕШНО!${NC}"
 echo -e "${PURPLE}==================================================${NC}"
 echo ""
 echo -e "${YELLOW}Домен панели управления:${NC} ${CYAN}https://$DOMAIN${NC}"
-echo -e "${YELLOW}Пароль для входа:${NC} ${GREEN}$RANDOM_PASSWORD${NC}"
+echo -e "${YELLOW}Сгенерированный пароль:${NC} ${GREEN}$RANDOM_PASSWORD${NC}"
+echo -e "${YELLOW}Важно:${NC} ${CYAN}Этот пароль нужно ввести при первом входе в админ-панель${NC}"
 echo ""
 echo -e "${YELLOW}Порт WireGuard:${NC} ${CYAN}51820/udp${NC}"
-echo -e "${YELLOW}Порт веб-интерфейса:${NC} ${CYAN}51821 (только для локального доступа)${NC}"
+echo -e "${YELLOW}Порт веб-интерфейса:${NC} ${CYAN}51821 (только для локального доступа через Caddy)${NC}"
 echo ""
 echo -e "${CYAN}Для управления сервисами:${NC}"
-echo -e "  ${GREEN}systemctl restart wg-easy${NC}    # Перезапуск wg-easy"
+echo -e "  ${GREEN}systemctl restart wg-easy${NC}    # Перезапуск wg-easy контейнера"
 echo -e "  ${GREEN}systemctl restart caddy${NC}     # Перезапуск Caddy"
-echo -e "  ${GREEN}systemctl status wg-easy${NC}    # Проверка статуса wg-easy"
+echo -e "  ${GREEN}podman ps${NC}                   # Просмотр запущенных контейнеров"
 echo -e "  ${GREEN}journalctl -u wg-easy -f${NC}    # Просмотр логов wg-easy"
 echo ""
-echo -e "${YELLOW}Важно:${NC}"
+echo -e "${YELLOW}Важные шаги после установки:${NC}"
 echo -e "1. ${CYAN}Подождите 2-3 минуты${NC} для получения SSL сертификата Let's Encrypt"
-echo -e "2. ${CYAN}Проверьте DNS запись${NC} для $DOMAIN - она должна указывать на IP этого сервера"
-echo -e "3. ${CYAN}Для добавления клиентов${NC} используйте веб-интерфейс по адресу https://$DOMAIN"
-echo -e "4. ${CYAN}Для резервного копирования${NC} сохраните содержимое $APP_DIR/app и $APP_DIR/node_modules"
+echo -e "2. ${CYAN}Откройте в браузере${NC} https://$DOMAIN и введите сгенерированный пароль"
+echo -e "3. ${CYAN}Перейдите в раздел 'Hooks'${NC} и добавьте PostUp/PostDown hooks для nftables (см. инструкции выше)"
+echo -e "4. ${CYAN}Настройте WireGuard${NC} - создайте первый клиент в админ-панели"
 echo ""
-echo -e "${YELLOW}Обновление wg-easy (официальный метод):${NC}"
-echo -e "  ${GREEN}cd $APP_DIR/repo${NC}"
-echo -e "  ${GREEN}sudo -u $WG_USER git pull${NC}"
-echo -e "  ${GREEN}sudo -u $WG_USER git checkout production 2>/dev/null || sudo -u $WG_USER git checkout main${NC}"
-echo -e "  ${GREEN}rm -rf $APP_DIR/app $APP_DIR/node_modules${NC}"
-echo -e "  ${GREEN}sudo -u $WG_USER mkdir -p $APP_DIR/app${NC}"
-echo -e "  ${GREEN}sudo -u $WG_USER cp -r src/* $APP_DIR/app/${NC}"
-echo -e "  ${GREEN}cd $APP_DIR/app${NC}"
-echo -e "  ${GREEN}sudo -u $WG_USER npm ci --omit=dev${NC}"
-echo -e "  ${GREEN}sudo -u $WG_USER cp -r node_modules $APP_DIR/${NC}"
-echo -e "  ${GREEN}chown -R $WG_USER:$WG_USER $APP_DIR/app $APP_DIR/node_modules${NC}"
-echo -e "  ${GREEN}systemctl restart wg-easy${NC}"
+echo -e "${YELLOW}Для резервного копирования:${NC}"
+echo -e "  ${GREEN}Конфигурация WireGuard:${NC} /etc/containers/volumes/wg-easy/"
+echo -e "  ${GREEN}Конфигурация Caddy:${NC} /etc/caddy/Caddyfile"
+echo ""
+echo -e "${YELLOW}Обновление wg-easy:${NC}"
+echo -e "  ${GREEN}systemctl restart wg-easy${NC}  # Автоматическое обновление через AutoUpdate=registry"
 echo ""
 echo -e "${PURPLE}==================================================${NC}"
 echo -e "${GREEN}УСТАНОВКА ЗАВЕРШЕНА!${NC}"
