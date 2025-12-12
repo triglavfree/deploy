@@ -1,4 +1,4 @@
-# Wireguard + Caddy + wg-easy panel
+# Wireguard + Caddy + WireGuard Easy panel
 
 
 ### Как использовать скрипт:
