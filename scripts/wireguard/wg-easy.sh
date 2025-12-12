@@ -337,7 +337,6 @@ if ! podman ps --format "{{.Names}}" | grep -q "wg-easy"; then
         print_error "Критическая ошибка: контейнер wg-easy не запускается. Проверьте логи выше."
     fi
 fi
-
 # =============== ШАГ 6: УСТАНОВКА CADDY ===============
 print_step "Шаг 6: Установка Caddy как reverse proxy"
 
