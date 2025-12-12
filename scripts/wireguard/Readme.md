@@ -6,7 +6,7 @@
 ```bash
 curl -s https://raw.githubusercontent.com/triglavfree/deploy/main/scripts/wireguard/wg-easy.sh | sudo bash -s vpn.duckdns.com
 ```
-### Ключевые преимущества этого гибридного подхода:
+### Ключевые преимущества гибридного подхода:
 
 ✅ Официальный метод установки wg-easy:
 
