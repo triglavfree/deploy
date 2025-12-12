@@ -70,7 +70,7 @@ function print_error() {
 # =============== ШАГ 1: ОБНОВЛЕНИЕ СИСТЕМЫ ===============
 print_step "Шаг 1: Обновление системы и установка базовых пакетов"
 apt update && apt upgrade -y
-apt install -y curl wget gnupg lsb-release ca-certificates git net-tools ufw fail2ban htop unzip unzip
+apt install -y curl wget gnupg lsb-release ca-certificates git net-tools ufw fail2ban unzip
 
 print_success "Система обновлена"
 
