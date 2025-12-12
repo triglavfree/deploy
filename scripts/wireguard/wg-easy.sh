@@ -140,20 +140,32 @@ print_success "Сетевая оптимизация применена"
 # =============== ШАГ 3: ЗАГРУЗКА МОДУЛЕЙ ЯДРА ===============
 print_step "Шаг 3: Настройка модулей ядра для WireGuard и nftables"
 
-# 3.1. Модули для WireGuard и nftables
+# 3.1. Правильные модули для nftables в Ubuntu 24.04
+print_step "Создание конфигурации модулей ядра"
 cat > /etc/modules-load.d/wg-easy.conf <<EOF
 wireguard
-nft_masq
-nft_nat
-nft_filter
+nf_tables
+nf_nat
+nf_conntrack
+nfnetlink
 EOF
 
-# 3.2. Загрузка модулей
-modprobe wireguard
-modprobe nft_masq
-modprobe nft_nat
-modprobe nft_filter
+# 3.2. Загрузка модулей с проверкой существования
+print_step "Загрузка модулей ядра"
+MODULES=("wireguard" "nf_tables" "nf_nat" "nf_conntrack" "nfnetlink")
 
+for module in "${MODULES[@]}"; do
+    if modprobe -n -v "$module" 2>/dev/null | grep -q "^insmod"; then
+        print_success "Модуль $module доступен для загрузки"
+        modprobe "$module"
+    else
+        print_warning "Модуль $module не найден или встроен в ядро (это нормально)"
+    fi
+done
+
+# 3.3. Проверка загруженных модулей
+print_step "Проверка загруженных модулей"
+lsmod | grep -E 'wireguard|nf_|nft_' || true
 print_success "Модули ядра настроены и загружены"
 
 # =============== ШАГ 4: НАСТРОЙКА PODMAN ДЛЯ WG-EASY ===============
