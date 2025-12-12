@@ -169,11 +169,9 @@ print_step "Шаг 5: Установка wg-easy (официальный мет�
 
 # Создание пользователя для wg-easy с домашней директорией
 if ! id -u "$WG_USER" &>/dev/null; then
-    # Создаем пользователя с домашней директорией
     useradd -r -m -d "/var/lib/$WG_USER" -s /bin/false "$WG_USER"
     print_success "Пользователь $WG_USER создан с домашней директорией"
 else
-    # Если пользователь существует, но нет домашней директории - создаем ее
     if [ ! -d "/var/lib/$WG_USER" ]; then
         mkdir -p "/var/lib/$WG_USER"
         chown "$WG_USER:$WG_USER" "/var/lib/$WG_USER"
@@ -182,7 +180,6 @@ else
     fi
 fi
 
-# Устанавливаем правильные права для домашней директории
 chown "$WG_USER:$WG_USER" "/var/lib/$WG_USER"
 chmod 700 "/var/lib/$WG_USER"
 
@@ -201,15 +198,20 @@ if [ -d "$APP_DIR/app" ]; then
     rm -rf "$APP_DIR/app"
 fi
 
-# Клонирование репозитория с явным указанием домашней директории
+if [ -d "$APP_DIR/node_modules" ]; then
+    print_warning "Директория $APP_DIR/node_modules уже существует. Очищаем..."
+    rm -rf "$APP_DIR/node_modules"
+fi
+
+# Клонирование репозитория
 print_step "Клонирование репозитория wg-easy..."
 sudo -u "$WG_USER" env HOME="/var/lib/$WG_USER" git clone https://github.com/wg-easy/wg-easy "$APP_DIR/repo"
 cd "$APP_DIR/repo"
 
-# Добавление директории в safe.directory для пользователя wg-easy
+# Добавление директории в safe.directory
 sudo -u "$WG_USER" env HOME="/var/lib/$WG_USER" git config --global --add safe.directory "$APP_DIR/repo"
 
-# Проверка доступных веток
+# Проверка доступных веток и тегов
 print_step "Проверка доступных веток и тегов..."
 AVAILABLE_BRANCHES=$(sudo -u "$WG_USER" env HOME="/var/lib/$WG_USER" git branch -a 2>/dev/null | grep -v 'HEAD' || true)
 AVAILABLE_TAGS=$(sudo -u "$WG_USER" env HOME="/var/lib/$WG_USER" git tag -l 2>/dev/null || true)
@@ -217,40 +219,86 @@ AVAILABLE_TAGS=$(sudo -u "$WG_USER" env HOME="/var/lib/$WG_USER" git tag -l 2>/d
 echo -e "${CYAN}Доступные ветки:${NC} $AVAILABLE_BRANCHES"
 echo -e "${CYAN}Доступные теги:${NC} $AVAILABLE_TAGS"
 
-# Попытка переключиться на ветку production (официальный метод)
-if sudo -u "$WG_USER" env HOME="/var/lib/$WG_USER" git show-ref --heads production &>/dev/null; then
-    print_success "Ветка production найдена"
-    sudo -u "$WG_USER" env HOME="/var/lib/$WG_USER" git checkout production
-elif sudo -u "$WG_USER" env HOME="/var/lib/$WG_USER" git show-ref --heads main &>/dev/null; then
-    print_success "Ветка main найдена"
-    sudo -u "$WG_USER" env HOME="/var/lib/$WG_USER" git checkout main
+# Выбор стабильной версии (приоритет: v15.1.0 -> v15.0.0 -> master)
+if sudo -u "$WG_USER" env HOME="/var/lib/$WG_USER" git show-ref --tags v15.1.0 &>/dev/null; then
+    print_success "Стабильный тег v15.1.0 найден"
+    sudo -u "$WG_USER" env HOME="/var/lib/$WG_USER" git checkout v15.1.0
+elif sudo -u "$WG_USER" env HOME="/var/lib/$WG_USER" git show-ref --tags v15.0.0 &>/dev/null; then
+    print_success "Стабильный тег v15.0.0 найден"
+    sudo -u "$WG_USER" env HOME="/var/lib/$WG_USER" git checkout v15.0.0
+elif sudo -u "$WG_USER" env HOME="/var/lib/$WG_USER" git show-ref --heads master &>/dev/null; then
+    print_success "Ветка master найдена"
+    sudo -u "$WG_USER" env HOME="/var/lib/$WG_USER" git checkout master
 else
-    # Попытка найти последний тег версии
-    LATEST_TAG=$(sudo -u "$WG_USER" env HOME="/var/lib/$WG_USER" git describe --tags $(sudo -u "$WG_USER" env HOME="/var/lib/$WG_USER" git rev-list --tags --max-count=1) 2>/dev/null)
-    if [ -n "$LATEST_TAG" ]; then
-        print_success "Найден последний тег: $LATEST_TAG"
-        sudo -u "$WG_USER" env HOME="/var/lib/$WG_USER" git checkout "$LATEST_TAG"
-    else
-        print_error "Не удалось найти подходящую ветку или тег для wg-easy"
-    fi
+    print_error "Не удалось найти стабильную версию wg-easy"
 fi
 
-# Перемещение src в /app (официальный метод)
-print_step "Перемещение файлов в /app директорию..."
-sudo -u "$WG_USER" mkdir -p "$APP_DIR/app"
-sudo -u "$WG_USER" cp -r src/* "$APP_DIR/app/"
+# Проверка структуры репозитория
+print_step "Проверка структуры репозитория..."
+if [ -d "frontend" ] && [ -d "backend" ]; then
+    print_warning "Обнаружена новая структура репозитория (разделение frontend/backend)"
+    
+    # Создание единой app директории
+    sudo -u "$WG_USER" mkdir -p "$APP_DIR/app"
+    
+    # Копирование backend файлов
+    sudo -u "$WG_USER" cp -r backend/* "$APP_DIR/app/"
+    
+    # Копирование package.json и package-lock.json из корня
+    sudo -u "$WG_USER" cp package*.json "$APP_DIR/app/"
+    
+    # Установка зависимостей
+    cd "$APP_DIR/app"
+    print_step "Установка зависимостей для новой структуры..."
+    
+    # Проверяем наличие package-lock.json
+    if [ -f "package-lock.json" ]; then
+        sudo -u "$WG_USER" env HOME="/var/lib/$WG_USER" npm ci --omit=dev
+    else
+        print_warning "package-lock.json отсутствует. Используем npm install..."
+        sudo -u "$WG_USER" env HOME="/var/lib/$WG_USER" npm install --omit=dev
+    fi
+    
+    print_success "Зависимости установлены для новой структуры"
+    
+    # Копирование node_modules
+    print_step "Копирование node_modules..."
+    sudo -u "$WG_USER" mkdir -p "$APP_DIR/node_modules"
+    sudo -u "$WG_USER" cp -r node_modules/* "$APP_DIR/node_modules/"
+    print_success "node_modules скопированы"
 
-# Установка зависимостей с оптимизацией (--omit=dev)
-cd "$APP_DIR/app"
-print_step "Установка зависимостей с оптимизацией..."
-sudo -u "$WG_USER" env HOME="/var/lib/$WG_USER" npm ci --omit=dev
-print_success "Зависимости установлены с оптимизацией (--omit=dev)"
+elif [ -d "src" ]; then
+    print_success "Обнаружена классическая структура (директория src)"
+    
+    # Создание app директории
+    sudo -u "$WG_USER" mkdir -p "$APP_DIR/app"
+    
+    # Копирование файлов из src
+    sudo -u "$WG_USER" cp -r src/* "$APP_DIR/app/"
+    
+    # Установка зависимостей
+    cd "$APP_DIR/app"
+    print_step "Установка зависимостей для классической структуры..."
+    
+    # Проверяем наличие package-lock.json
+    if [ -f "package-lock.json" ]; then
+        sudo -u "$WG_USER" env HOME="/var/lib/$WG_USER" npm ci --omit=dev
+    else
+        print_warning "package-lock.json отсутствует. Используем npm install..."
+        sudo -u "$WG_USER" env HOME="/var/lib/$WG_USER" npm install --omit=dev
+    fi
+    
+    print_success "Зависимости установлены для классической структуры"
+    
+    # Копирование node_modules
+    print_step "Копирование node_modules..."
+    sudo -u "$WG_USER" mkdir -p "$APP_DIR/node_modules"
+    sudo -u "$WG_USER" cp -r node_modules/* "$APP_DIR/node_modules/"
+    print_success "node_modules скопированы"
 
-# Копирование node_modules в родительскую директорию (официальный метод)
-print_step "Копирование node_modules..."
-sudo -u "$WG_USER" mkdir -p "$APP_DIR/node_modules"
-sudo -u "$WG_USER" cp -r node_modules/* "$APP_DIR/node_modules/"
-print_success "node_modules скопированы"
+else
+    print_error "Не удалось определить структуру репозитория. Ожидались директории 'src' или 'frontend/backend'"
+fi
 
 # Генерация случайного пароля
 RANDOM_PASSWORD=$(tr -dc A-Za-z0-9 </dev/urandom | head -c 16)
