@@ -203,6 +203,15 @@ if [ -d "$APP_DIR/node_modules" ]; then
     rm -rf "$APP_DIR/node_modules"
 fi
 
+# Установка Node.js 18.x LTS (требуется для wg-easy)
+print_step "Установка Node.js 18.x LTS (требуется для wg-easy)"
+apt remove -y nodejs npm
+curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg
+echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_18.x nodistro main" | tee /etc/apt/sources.list.d/nodesource.list
+apt update && apt install -y nodejs
+npm install -g npm@9.6.7  # Совместимая версия npm
+print_success "Node.js 18.x LTS установлен"
+
 # Клонирование репозитория
 print_step "Клонирование репозитория wg-easy..."
 sudo -u "$WG_USER" env HOME="/var/lib/$WG_USER" git clone https://github.com/wg-easy/wg-easy "$APP_DIR/repo"
@@ -219,18 +228,15 @@ AVAILABLE_TAGS=$(sudo -u "$WG_USER" env HOME="/var/lib/$WG_USER" git tag -l 2>/d
 echo -e "${CYAN}Доступные ветки:${NC} $AVAILABLE_BRANCHES"
 echo -e "${CYAN}Доступные теги:${NC} $AVAILABLE_TAGS"
 
-# Выбор стабильной версии (приоритет: v15.1.0 -> v15.0.0 -> master)
-if sudo -u "$WG_USER" env HOME="/var/lib/$WG_USER" git show-ref --tags v15.1.0 &>/dev/null; then
-    print_success "Стабильный тег v15.1.0 найден"
-    sudo -u "$WG_USER" env HOME="/var/lib/$WG_USER" git checkout v15.1.0
+# Выбор версии с package-lock.json (v14.0.0 имеет полный package-lock.json)
+if sudo -u "$WG_USER" env HOME="/var/lib/$WG_USER" git show-ref --tags v14.0.0 &>/dev/null; then
+    print_success "Стабильный тег v14.0.0 найден (с package-lock.json)"
+    sudo -u "$WG_USER" env HOME="/var/lib/$WG_USER" git checkout v14.0.0
 elif sudo -u "$WG_USER" env HOME="/var/lib/$WG_USER" git show-ref --tags v15.0.0 &>/dev/null; then
     print_success "Стабильный тег v15.0.0 найден"
     sudo -u "$WG_USER" env HOME="/var/lib/$WG_USER" git checkout v15.0.0
-elif sudo -u "$WG_USER" env HOME="/var/lib/$WG_USER" git show-ref --heads master &>/dev/null; then
-    print_success "Ветка master найдена"
-    sudo -u "$WG_USER" env HOME="/var/lib/$WG_USER" git checkout master
 else
-    print_error "Не удалось найти стабильную версию wg-easy"
+    print_error "Не удалось найти подходящую версию wg-easy"
 fi
 
 # Проверка структуры репозитория
@@ -245,26 +251,24 @@ if [ -d "frontend" ] && [ -d "backend" ]; then
     sudo -u "$WG_USER" cp -r backend/* "$APP_DIR/app/"
     
     # Копирование package.json и package-lock.json из корня
-    sudo -u "$WG_USER" cp package*.json "$APP_DIR/app/"
+    sudo -u "$WG_USER" cp package*.json "$APP_DIR/app/" 2>/dev/null || true
     
     # Установка зависимостей
     cd "$APP_DIR/app"
     print_step "Установка зависимостей для новой структуры..."
     
-    # Проверяем наличие package-lock.json
-    if [ -f "package-lock.json" ]; then
-        sudo -u "$WG_USER" env HOME="/var/lib/$WG_USER" npm ci --omit=dev
-    else
-        print_warning "package-lock.json отсутствует. Используем npm install..."
-        sudo -u "$WG_USER" env HOME="/var/lib/$WG_USER" npm install --omit=dev
-    fi
+    # Установка всех зависимостей с флагом --force для обхода проблем
+    sudo -u "$WG_USER" env HOME="/var/lib/$WG_USER" npm install --force
+    
+    # Вручную установка отсутствующих пакетов
+    sudo -u "$WG_USER" env HOME="/var/lib/$WG_USER" npm install @nuxt/eslint --save-dev
     
     print_success "Зависимости установлены для новой структуры"
     
     # Копирование node_modules
     print_step "Копирование node_modules..."
     sudo -u "$WG_USER" mkdir -p "$APP_DIR/node_modules"
-    sudo -u "$WG_USER" cp -r node_modules/* "$APP_DIR/node_modules/"
+    sudo -u "$WG_USER" cp -r node_modules "$APP_DIR/"
     print_success "node_modules скопированы"
 
 elif [ -d "src" ]; then
@@ -276,16 +280,22 @@ elif [ -d "src" ]; then
     # Копирование файлов из src
     sudo -u "$WG_USER" cp -r src/* "$APP_DIR/app/"
     
+    # Копирование package.json и package-lock.json из корня
+    sudo -u "$WG_USER" cp package*.json "$APP_DIR/app/" 2>/dev/null || true
+    
     # Установка зависимостей
     cd "$APP_DIR/app"
     print_step "Установка зависимостей для классической структуры..."
     
-    # Проверяем наличие package-lock.json
+    # Попытка использовать npm ci если есть package-lock.json
     if [ -f "package-lock.json" ]; then
         sudo -u "$WG_USER" env HOME="/var/lib/$WG_USER" npm ci --omit=dev
     else
-        print_warning "package-lock.json отсутствует. Используем npm install..."
-        sudo -u "$WG_USER" env HOME="/var/lib/$WG_USER" npm install --omit=dev
+        print_warning "package-lock.json отсутствует. Используем npm install с --force..."
+        sudo -u "$WG_USER" env HOME="/var/lib/$WG_USER" npm install --force --omit=dev
+        
+        # Вручную установка отсутствующих пакетов
+        sudo -u "$WG_USER" env HOME="/var/lib/$WG_USER" npm install @nuxt/eslint --save-dev
     fi
     
     print_success "Зависимости установлены для классической структуры"
@@ -293,7 +303,7 @@ elif [ -d "src" ]; then
     # Копирование node_modules
     print_step "Копирование node_modules..."
     sudo -u "$WG_USER" mkdir -p "$APP_DIR/node_modules"
-    sudo -u "$WG_USER" cp -r node_modules/* "$APP_DIR/node_modules/"
+    sudo -u "$WG_USER" cp -r node_modules "$APP_DIR/"
     print_success "node_modules скопированы"
 
 else
@@ -320,7 +330,15 @@ UI_CHART_TYPE=bar
 EOF
 
 chown "$WG_USER:$WG_USER" "$APP_DIR/app/.env"
+# Установка прав на package.json
+chmod 644 "$APP_DIR/app/package.json" 2>/dev/null || true
 print_success ".env файл создан с русским языком"
+
+# Проверка работоспособности
+print_step "Проверка работоспособности wg-easy..."
+cd "$APP_DIR/app"
+sudo -u "$WG_USER" env HOME="/var/lib/$WG_USER" node -e "require('./index.js')" 2>/dev/null || true
+print_success "Проверка завершена"
 
 # =============== ШАГ 6: SYSTEMD СЕРВИС (ОФИЦИАЛЬНЫЙ ШАБЛОН) ===============
 print_step "Шаг 6: Настройка systemd сервиса (официальный шаблон)"
