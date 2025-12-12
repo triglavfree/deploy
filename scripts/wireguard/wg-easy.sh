@@ -20,9 +20,11 @@ fi
 
 DOMAIN="$1"
 EMAIL="admin@$DOMAIN"
+APP_DIR="/opt/wg-easy"
+WG_USER="wg-easy"
 
 echo -e "${PURPLE}==================================================${NC}"
-echo -e "${CYAN}WG-EASY + CADDY УСТАНОВКА${NC}"
+echo -e "${CYAN}WG-EASY + CADDY УСТАНОВКА (ОФИЦИАЛЬНЫЙ МЕТОД)${NC}"
 echo -e "${YELLOW}Домен: ${GREEN}$DOMAIN${NC}"
 echo -e "${YELLOW}Email для Let's Encrypt: ${GREEN}$EMAIL${NC}"
 echo -e "${PURPLE}==================================================${NC}"
@@ -70,21 +72,43 @@ function print_error() {
 # =============== ШАГ 1: ОБНОВЛЕНИЕ СИСТЕМЫ ===============
 print_step "Шаг 1: Обновление системы и установка базовых пакетов"
 apt update && apt upgrade -y
-apt install -y curl wget gnupg lsb-release ca-certificates net-tools ufw fail2ban unzip
-
+apt install -y curl wget gnupg lsb-release ca-certificates net-tools ufw fail2ban unzip git
 print_success "Система обновлена"
 
-# =============== ШАГ 2: ОПТИМИЗАЦИИ ДЛЯ СЛАБОГО VPS ===============
-print_step "Шаг 2: Настройка оптимизаций системы"
+# =============== ШАГ 2: СИСТЕМНЫЕ ОПТИМИЗАЦИИ ===============
+print_step "Шаг 2: Системные оптимизации для слабого VPS"
 
-# 2.1. Включение BBR
-print_step "Включение BBR (TCP BBR congestion control)"
+# 2.1. Настройка ядра для WireGuard (официальный метод)
+print_step "Настройка ядра для WireGuard"
+cat >> /etc/sysctl.conf <<EOF
+net.ipv4.ip_forward=1
+net.ipv4.conf.all.src_valid_mark=1
+net.ipv6.conf.all.disable_ipv6=0
+net.ipv6.conf.all.forwarding=1
+net.ipv6.conf.default.forwarding=1
+EOF
+
+# 2.2. Включение BBR
 echo "net.core.default_qdisc=fq" >> /etc/sysctl.conf
 echo "net.ipv4.tcp_congestion_control=bbr" >> /etc/sysctl.conf
-sysctl -p
-print_success "BBR включен"
 
-# 2.2. Создание swap файла 2GB
+# 2.3. Сетевая оптимизация
+cat >> /etc/sysctl.conf <<EOF
+net.core.rmem_max=16777216
+net.core.wmem_max=16777216
+net.ipv4.tcp_rmem=4096 87380 16777216
+net.ipv4.tcp_wmem=4096 65536 16777216
+net.core.netdev_max_backlog=30000
+net.ipv4.tcp_notsent_lowat=16384
+net.ipv4.tcp_no_metrics_save=1
+net.ipv4.tcp_fastopen=3
+net.ipv4.tcp_slow_start_after_idle=0
+EOF
+
+sysctl -p
+print_success "Ядро настроено для WireGuard и оптимизировано"
+
+# 2.4. Создание swap файла 2GB
 print_step "Создание swap файла 2GB"
 if [ ! -f /swapfile ]; then
     fallocate -l 2G /swapfile
@@ -101,40 +125,18 @@ else
     print_warning "Swap файл уже существует"
 fi
 
-# 2.3. Оптимизация NVMe/SSD
+# 2.5. Оптимизация NVMe/SSD
 print_step "Оптимизация NVMe/SSD"
-ROOT_DEVICE=$(df / --output=source | tail -1 | sed 's/\/dev\///')
+ROOT_DEVICE=$(df / --output=source | tail -1 | sed 's/\/dev\///' | sed 's/[0-9]*$//')
 if [ -f /sys/block/"$ROOT_DEVICE"/queue/scheduler ]; then
     echo 'none' > /sys/block/"$ROOT_DEVICE"/queue/scheduler
     echo 'vm.dirty_background_ratio=5' >> /etc/sysctl.conf
     echo 'vm.dirty_ratio=10' >> /etc/sysctl.conf
+    sysctl -p
     print_success "NVMe/SSD оптимизация применена"
 else
     print_warning "Не удалось оптимизировать NVMe/SSD (устройство не найдено)"
 fi
-
-# 2.4. Сетевая оптимизация IPv4
-print_step "Сетевая оптимизация IPv4"
-cat >> /etc/sysctl.conf <<EOF
-net.core.rmem_max=16777216
-net.core.wmem_max=16777216
-net.ipv4.tcp_rmem=4096 87380 16777216
-net.ipv4.tcp_wmem=4096 65536 16777216
-net.core.netdev_max_backlog=30000
-net.ipv4.tcp_congestion_control=bbr
-net.ipv4.tcp_notsent_lowat=16384
-net.ipv4.tcp_no_metrics_save=1
-net.ipv4.tcp_fastopen=3
-net.ipv4.tcp_slow_start_after_idle=0
-net.ipv4.ip_forward=1
-net.ipv4.conf.all.forwarding=1
-net.ipv4.conf.default.forwarding=1
-net.ipv6.conf.all.forwarding=1
-net.ipv6.conf.default.forwarding=1
-net.ipv4.conf.all.src_valid_mark=1
-EOF
-sysctl -p
-print_success "Сетевая оптимизация применена"
 
 # =============== ШАГ 3: УСТАНОВКА WIREGUARD ===============
 print_step "Шаг 3: Установка WireGuard"
@@ -162,28 +164,38 @@ apt update && apt install -y nodejs
 npm install -g npm@latest
 print_success "Node.js 20.x установлен"
 
-# =============== ШАГ 5: УСТАНОВКА WG-EASY ===============
-print_step "Шаг 5: Установка wg-easy"
+# =============== ШАГ 5: УСТАНОВКА WG-EASY (ОФИЦИАЛЬНЫЙ МЕТОД) ===============
+print_step "Шаг 5: Установка wg-easy (официальный метод)"
 
 # Создание пользователя для wg-easy
-if ! id -u wg-easy &>/dev/null; then
-    useradd -r -s /bin/false wg-easy
-    print_success "Пользователь wg-easy создан"
+if ! id -u "$WG_USER" &>/dev/null; then
+    useradd -r -s /bin/false "$WG_USER"
+    print_success "Пользователь $WG_USER создан"
 fi
 
-mkdir -p /opt/wg-easy
-chown wg-easy:wg-easy /opt/wg-easy
-cd /opt/wg-easy
+# Создание директории и установка с правами пользователя
+mkdir -p "$APP_DIR"
+chown "$WG_USER:$WG_USER" "$APP_DIR"
 
-# Установка wg-easy от имени пользователя wg-easy
-sudo -u wg-easy npm init -y
-sudo -u wg-easy npm install wg-easy@latest
+# Клонирование репозитория и переход в production ветку
+sudo -u "$WG_USER" git clone https://github.com/wg-easy/wg-easy "$APP_DIR/repo"
+cd "$APP_DIR/repo"
+sudo -u "$WG_USER" git checkout production
+print_success "Репозиторий клонирован, production ветка выбрана"
+
+# Перемещение src в /app (официальный метод)
+sudo -u "$WG_USER" mv src "$APP_DIR/app"
+cd "$APP_DIR/app"
+
+# Установка зависимостей с оптимизацией (--omit=dev)
+sudo -u "$WG_USER" npm ci --omit=dev
+print_success "Зависимости установлены с оптимизацией (--omit=dev)"
 
 # Генерация случайного пароля
 RANDOM_PASSWORD=$(tr -dc A-Za-z0-9 </dev/urandom | head -c 16)
 
-# Создание конфигурации
-cat > /opt/wg-easy/.env <<EOF
+# Создание .env файла
+cat > "$APP_DIR/app/.env" <<EOF
 PORT=51821
 WEBUI_HOST=0.0.0.0
 PASSWORD=$RANDOM_PASSWORD
@@ -198,39 +210,39 @@ UI_TRAFFIC_STATS=true
 UI_CHART_TYPE=bar
 EOF
 
-chown wg-easy:wg-easy /opt/wg-easy/.env
+chown "$WG_USER:$WG_USER" "$APP_DIR/app/.env"
+print_success ".env файл создан"
 
-# Создание systemd сервиса
-cat > /etc/systemd/system/wg-easy.service <<EOF
-[Unit]
-Description=WG-Easy Service
-After=network.target
+# =============== ШАГ 6: SYSTEMD СЕРВИС (ОФИЦИАЛЬНЫЙ ШАБЛОН) ===============
+print_step "Шаг 6: Настройка systemd сервиса (официальный шаблон)"
 
-[Service]
-Type=simple
-User=wg-easy
-Group=wg-easy
-WorkingDirectory=/opt/wg-easy
-EnvironmentFile=/opt/wg-easy/.env
-ExecStart=/usr/bin/node /opt/wg-easy/node_modules/wg-easy/server.js
-Restart=always
-RestartSec=5
-CapabilityBoundingSet=NET_ADMIN NET_RAW SYS_MODULE
-AmbientCapabilities=NET_ADMIN NET_RAW SYS_MODULE
+# Загрузка официального шаблона сервиса
+curl -sLo /etc/systemd/system/wg-easy.service https://raw.githubusercontent.com/wg-easy/wg-easy/production/wg-easy.service
 
-[Install]
-WantedBy=multi-user.target
-EOF
+# Модификация шаблона под нашу конфигурацию
+sed -i "s|/path/to/wireguard-easy|$APP_DIR/app|g" /etc/systemd/system/wg-easy.service
+sed -i "s|user = .*|user = $WG_USER|g" /etc/systemd/system/wg-easy.service
+sed -i "s|group = .*|group = $WG_USER|g" /etc/systemd/system/wg-easy.service
+sed -i "s|Environment=PORT=.*|Environment=PORT=51821|g" /etc/systemd/system/wg-easy.service
 
+# Добавление необходимых capabilities
+sed -i '/^AmbientCapabilities=/a AmbientCapabilities=NET_ADMIN NET_RAW SYS_MODULE' /etc/systemd/system/wg-easy.service
+
+# Перезагрузка systemd и запуск сервиса
 systemctl daemon-reload
 systemctl enable wg-easy
 systemctl start wg-easy
 
-print_success "wg-easy установлен и запущен"
-echo -e "${YELLOW}Пароль для панели управления: ${GREEN}$RANDOM_PASSWORD${NC}"
+# Проверка статуса
+sleep 5
+if systemctl is-active --quiet wg-easy; then
+    print_success "wg-easy сервис запущен успешно"
+else
+    print_error "wg-easy сервис не запустился. Проверьте журналы: journalctl -u wg-easy -f"
+fi
 
-# =============== ШАГ 6: УСТАНОВКА CADDY ===============
-print_step "Шаг 6: Установка Caddy"
+# =============== ШАГ 7: УСТАНОВКА CADDY ===============
+print_step "Шаг 7: Установка Caddy как reverse proxy"
 
 apt install -y debian-keyring debian-archive-keyring apt-transport-https
 curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
@@ -269,9 +281,10 @@ systemctl restart caddy
 
 print_success "Caddy установлен и настроен как reverse proxy"
 
-# =============== ШАГ 7: НАСТРОЙКА БРАНДМАУЭРА UFW ===============
-print_step "Шаг 7: Настройка брандмауэра UFW"
+# =============== ШАГ 8: НАСТРОЙКА БЕЗОПАСНОСТИ ===============
+print_step "Шаг 8: Настройка безопасности (UFW + Fail2Ban)"
 
+# 8.1. Настройка UFW
 ufw default deny incoming
 ufw default allow outgoing
 ufw allow ssh comment "SSH Access"
@@ -279,13 +292,9 @@ ufw allow http comment "HTTP for Let's Encrypt"
 ufw allow https comment "HTTPS for wg-easy"
 ufw allow 51820/udp comment "WireGuard VPN"
 ufw --force enable
-
 print_success "UFW настроен"
 
-# =============== ШАГ 8: НАСТРОЙКА FAIL2BAN ===============
-print_step "Шаг 8: Настройка Fail2Ban"
-
-# Основная конфигурация
+# 8.2. Настройка Fail2Ban
 cat > /etc/fail2ban/jail.local <<EOF
 [sshd]
 enabled = true
@@ -306,7 +315,6 @@ bantime = 3600
 findtime = 600
 EOF
 
-# Фильтр для Caddy
 cat > /etc/fail2ban/filter.d/caddy-auth.conf <<EOF
 [Definition]
 failregex = ^.*\"(GET|POST|HEAD) .*\" (401|403|429) .*\$
@@ -314,56 +322,35 @@ ignoreregex =
 EOF
 
 systemctl restart fail2ban
-
 print_success "Fail2Ban настроен"
 
-# =============== ШАГ 9: НАСТРОЙКА NF.TABLES ===============
+# =============== ШАГ 9: NF.TABLES ДЛЯ NAT ===============
 print_step "Шаг 9: Настройка nftables для NAT"
 
 apt install -y nftables
 systemctl enable nftables
 
-# Базовая конфигурация nftables
+# Базовая конфигурация nftables для WireGuard
 cat > /etc/nftables.conf <<EOF
 #!/usr/sbin/nft -f
-
 flush ruleset
 
 table inet filter {
     chain input {
         type filter hook input priority 0; policy drop;
-        
-        # Разрешить established/related соединения
         ct state established,related accept
-        
-        # Разрешить loopback
         iif lo accept
-        
-        # Разрешить ICMP
         icmp type echo-request limit rate 5/second accept
         icmp type { echo-reply, destination-unreachable, time-exceeded, parameter-problem } accept
-        
-        # Разрешить SSH
         tcp dport 22 accept
-        
-        # Разрешить HTTP/HTTPS для Let's Encrypt и Caddy
         tcp dport {80, 443} accept
-        
-        # Разрешить WireGuard
         udp dport 51820 accept
-        
-        # Логгирование отклоненных пакетов (опционально)
-        # log prefix "DROPPED: " counter drop
     }
     
     chain forward {
         type filter hook forward priority 0; policy drop;
-        
-        # Разрешить forward для WireGuard
-        iifname "wg0" accept
-        oifname "wg0" accept
-        
-        # Разрешить established/related соединения
+        iifname wg0 accept
+        oifname wg0 accept
         ct state established,related accept
     }
 }
@@ -371,15 +358,12 @@ table inet filter {
 table inet nat {
     chain postrouting {
         type nat hook postrouting priority 100; policy accept;
-        
-        # Masquerade для WireGuard
-        oifname != "wg0" ip saddr 10.8.0.0/24 masquerade
+        oifname != wg0 ip saddr 10.8.0.0/24 masquerade
     }
 }
 EOF
 
 systemctl restart nftables
-
 print_success "nftables настроен для WireGuard NAT"
 
 # =============== ШАГ 10: ФИНАЛЬНАЯ ПРОВЕРКА ===============
@@ -393,7 +377,7 @@ systemctl is-active --quiet nftables && echo -e "${GREEN}✓ nftables service is
 
 # Проверка портов
 echo -e "${CYAN}Проверка открытых портов:${NC}"
-ss -tulpn | grep -E ':(22|80|443|51820|51821)'
+ss -tulpn | grep -E ':(22|80|443|51820|51821)' || true
 
 # =============== ФИНАЛЬНАЯ ИНФОРМАЦИЯ ===============
 echo -e "${PURPLE}==================================================${NC}"
@@ -410,14 +394,23 @@ echo -e "${CYAN}Для управления сервисами:${NC}"
 echo -e "  ${GREEN}systemctl restart wg-easy${NC}    # Перезапуск wg-easy"
 echo -e "  ${GREEN}systemctl restart caddy${NC}     # Перезапуск Caddy"
 echo -e "  ${GREEN}systemctl status wg-easy${NC}    # Проверка статуса wg-easy"
+echo -e "  ${GREEN}journalctl -u wg-easy -f${NC}    # Просмотр логов wg-easy"
 echo ""
 echo -e "${YELLOW}Важно:${NC}"
-echo -e "1. ${CYAN}Для первого входа подождите 1-2 минуты${NC} после завершения скрипта (Caddy получает SSL сертификат)"
+echo -e "1. ${CYAN}Подождите 2-3 минуты${NC} для получения SSL сертификата Let's Encrypt"
 echo -e "2. ${CYAN}Проверьте DNS запись${NC} для $DOMAIN - она должна указывать на IP этого сервера"
-echo -e "3. ${CYAN}Если возникают проблемы${NC}, проверьте логи:"
-echo -e "   ${GREEN}journalctl -u wg-easy -f${NC}    # Логи wg-easy"
-echo -e "   ${GREEN}journalctl -u caddy -f${NC}      # Логи Caddy"
-echo -e "   ${GREEN}tail -f /var/log/caddy/wg-easy.log${NC}  # Логи доступа"
+echo -e "3. ${CYAN}Для добавления клиентов${NC} используйте веб-интерфейс по адресу https://$DOMAIN"
+echo -e "4. ${CYAN}Для резервного копирования${NC} сохраните содержимое $APP_DIR/app"
+echo ""
+echo -e "${YELLOW}Обновление wg-easy:${NC}"
+echo -e "  ${GREEN}cd $APP_DIR/repo${NC}"
+echo -e "  ${GREEN}sudo -u $WG_USER git pull${NC}"
+echo -e "  ${GREEN}sudo -u $WG_USER git checkout production${NC}"
+echo -e "  ${GREEN}sudo -u $WG_USER mv src $APP_DIR/app_new${NC}"
+echo -e "  ${GREEN}sudo -u $WG_USER cp -r $APP_DIR/app/.env $APP_DIR/app_new/${NC}"
+echo -e "  ${GREEN}mv $APP_DIR/app $APP_DIR/app_old && mv $APP_DIR/app_new $APP_DIR/app${NC}"
+echo -e "  ${GREEN}chown -R $WG_USER:$WG_USER $APP_DIR/app${NC}"
+echo -e "  ${GREEN}systemctl restart wg-easy${NC}"
 echo ""
 echo -e "${PURPLE}==================================================${NC}"
 echo -e "${GREEN}УСТАНОВКА ЗАВЕРШЕНА!${NC}"
