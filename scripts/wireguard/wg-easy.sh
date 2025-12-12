@@ -167,11 +167,24 @@ print_success "Node.js 20.x установлен"
 # =============== ШАГ 5: УСТАНОВКА WG-EASY (ОФИЦИАЛЬНЫЙ МЕТОД) ===============
 print_step "Шаг 5: Установка wg-easy (официальный метод)"
 
-# Создание пользователя для wg-easy
+# Создание пользователя для wg-easy с домашней директорией
 if ! id -u "$WG_USER" &>/dev/null; then
-    useradd -r -s /bin/false "$WG_USER"
-    print_success "Пользователь $WG_USER создан"
+    # Создаем пользователя с домашней директорией
+    useradd -r -m -d "/var/lib/$WG_USER" -s /bin/false "$WG_USER"
+    print_success "Пользователь $WG_USER создан с домашней директорией"
+else
+    # Если пользователь существует, но нет домашней директории - создаем ее
+    if [ ! -d "/var/lib/$WG_USER" ]; then
+        mkdir -p "/var/lib/$WG_USER"
+        chown "$WG_USER:$WG_USER" "/var/lib/$WG_USER"
+        usermod -d "/var/lib/$WG_USER" "$WG_USER"
+        print_success "Создана домашняя директория для существующего пользователя $WG_USER"
+    fi
 fi
+
+# Устанавливаем правильные права для домашней директории
+chown "$WG_USER:$WG_USER" "/var/lib/$WG_USER"
+chmod 700 "/var/lib/$WG_USER"
 
 # Создание директории и установка с правами пользователя
 mkdir -p "$APP_DIR"
@@ -188,40 +201,37 @@ if [ -d "$APP_DIR/app" ]; then
     rm -rf "$APP_DIR/app"
 fi
 
-# Клонирование репозитория
-sudo -u "$WG_USER" git clone https://github.com/wg-easy/wg-easy "$APP_DIR/repo"
+# Клонирование репозитория с явным указанием домашней директории
+print_step "Клонирование репозитория wg-easy..."
+sudo -u "$WG_USER" env HOME="/var/lib/$WG_USER" git clone https://github.com/wg-easy/wg-easy "$APP_DIR/repo"
 cd "$APP_DIR/repo"
 
 # Добавление директории в safe.directory для пользователя wg-easy
-sudo -u "$WG_USER" git config --global --add safe.directory "$APP_DIR/repo"
+sudo -u "$WG_USER" env HOME="/var/lib/$WG_USER" git config --global --add safe.directory "$APP_DIR/repo"
 
 # Проверка доступных веток
 print_step "Проверка доступных веток и тегов..."
-AVAILABLE_BRANCHES=$(sudo -u "$WG_USER" git branch -a 2>/dev/null | grep -v 'HEAD' || true)
-AVAILABLE_TAGS=$(sudo -u "$WG_USER" git tag -l 2>/dev/null || true)
+AVAILABLE_BRANCHES=$(sudo -u "$WG_USER" env HOME="/var/lib/$WG_USER" git branch -a 2>/dev/null | grep -v 'HEAD' || true)
+AVAILABLE_TAGS=$(sudo -u "$WG_USER" env HOME="/var/lib/$WG_USER" git tag -l 2>/dev/null || true)
 
 echo -e "${CYAN}Доступные ветки:${NC} $AVAILABLE_BRANCHES"
 echo -e "${CYAN}Доступные теги:${NC} $AVAILABLE_TAGS"
 
 # Попытка переключиться на ветку production (официальный метод)
-if sudo -u "$WG_USER" git show-ref --heads production &>/dev/null; then
+if sudo -u "$WG_USER" env HOME="/var/lib/$WG_USER" git show-ref --heads production &>/dev/null; then
     print_success "Ветка production найдена"
-    sudo -u "$WG_USER" git checkout production
+    sudo -u "$WG_USER" env HOME="/var/lib/$WG_USER" git checkout production
+elif sudo -u "$WG_USER" env HOME="/var/lib/$WG_USER" git show-ref --heads main &>/dev/null; then
+    print_success "Ветка main найдена"
+    sudo -u "$WG_USER" env HOME="/var/lib/$WG_USER" git checkout main
 else
-    print_warning "Ветка production не найдена. Пытаемся использовать main..."
-    if sudo -u "$WG_USER" git show-ref --heads main &>/dev/null; then
-        sudo -u "$WG_USER" git checkout main
-        print_success "Ветка main найдена и использована"
+    # Попытка найти последний тег версии
+    LATEST_TAG=$(sudo -u "$WG_USER" env HOME="/var/lib/$WG_USER" git describe --tags $(sudo -u "$WG_USER" env HOME="/var/lib/$WG_USER" git rev-list --tags --max-count=1) 2>/dev/null)
+    if [ -n "$LATEST_TAG" ]; then
+        print_success "Найден последний тег: $LATEST_TAG"
+        sudo -u "$WG_USER" env HOME="/var/lib/$WG_USER" git checkout "$LATEST_TAG"
     else
-        print_warning "Ветки production и main не найдены. Используем последний тег..."
-        # Получаем последний тег
-        LATEST_TAG=$(sudo -u "$WG_USER" git describe --tags $(sudo -u "$WG_USER" git rev-list --tags --max-count=1) 2>/dev/null)
-        if [ -n "$LATEST_TAG" ]; then
-            sudo -u "$WG_USER" git checkout "$LATEST_TAG"
-            print_success "Используется последний тег: $LATEST_TAG"
-        else
-            print_error "Не удалось найти подходящую ветку или тег для wg-easy"
-        fi
+        print_error "Не удалось найти подходящую ветку или тег для wg-easy"
     fi
 fi
 
@@ -233,12 +243,13 @@ sudo -u "$WG_USER" cp -r src/* "$APP_DIR/app/"
 # Установка зависимостей с оптимизацией (--omit=dev)
 cd "$APP_DIR/app"
 print_step "Установка зависимостей с оптимизацией..."
-sudo -u "$WG_USER" npm ci --omit=dev
+sudo -u "$WG_USER" env HOME="/var/lib/$WG_USER" npm ci --omit=dev
 print_success "Зависимости установлены с оптимизацией (--omit=dev)"
 
 # Копирование node_modules в родительскую директорию (официальный метод)
 print_step "Копирование node_modules..."
-sudo -u "$WG_USER" cp -r node_modules "$APP_DIR/"
+sudo -u "$WG_USER" mkdir -p "$APP_DIR/node_modules"
+sudo -u "$WG_USER" cp -r node_modules/* "$APP_DIR/node_modules/"
 print_success "node_modules скопированы"
 
 # Генерация случайного пароля
