@@ -251,13 +251,17 @@ printf '\033c'  # Самый надежный способ очистки экр
 # =============== ФИНАЛЬНАЯ СВОДКА ===============
 print_step "ФИНАЛЬНАЯ СВОДКА"
 
-# Внешний IP - улучшенная версия с резервными вариантами
-EXTERNAL_IP=$(curl -s4 https://api.ipify.org 2>/dev/null || \
-              curl -s4 https://ipinfo.io/ip 2>/dev/null || \
-              curl -s4 https://icanhazip.com 2>/dev/null || \
-              curl -s4 https://ifconfig.me/ip 2>/dev/null || \
-              echo "не удалось определить")
-print_info "Внешний IP-адрес: ${EXTERNAL_IP}"
+# Swap и BBR
+SWAP_SIZE=$(swapon --show --bytes | awk 'NR==2 {print $3}' 2>/dev/null || echo "неизвестно")
+print_info "Swap: ${SWAP_SIZE:-0} байт активно"
+BBR_STATUS=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo "неизвестно")
+print_info "BBR: ${BBR_STATUS}"
+
+# Статус NVMe/SSD оптимизации
+SCHEDULER_STATUS=$(cat /sys/block/"$ROOT_DEVICE"/queue/scheduler 2>/dev/null || echo "неизвестно")
+print_info "Планировщик диска: ${SCHEDULER_STATUS:-неизвестно}"
+TRIM_STATUS=$(grep -q 'discard' /etc/fstab 2>/dev/null && echo "включен" || echo "отключен")
+print_info "TRIM для SSD: $TRIM_STATUS"
 
 # Открытые порты
 print_info "Открытые порты:"
@@ -271,6 +275,14 @@ else
     print_warning "Fail2Ban: неактивен"
 fi
 
+# Статус UFW
+UFW_STATUS=$(ufw status | grep -i "Status: active" 2>/dev/null || echo "inactive")
+if [[ "$UFW_STATUS" == *"active"* ]]; then
+    print_success "UFW: активен (защита сети включена)"
+else
+    print_warning "UFW: неактивен (защита сети отключена!)"
+fi
+
 # Проверка доступа по SSH после отключения паролей
 SSH_ACCESS=$(ss -tuln | grep ":$SSH_PORT" | grep LISTEN 2>/dev/null || echo "не слушается")
 if [[ "$SSH_ACCESS" != "не слушается" ]]; then
@@ -279,17 +291,13 @@ else
     print_error "SSH сервер не слушает порт $SSH_PORT! Проверьте конфигурацию!"
 fi
 
-# Swap и BBR
-SWAP_SIZE=$(swapon --show --bytes | awk 'NR==2 {print $3}' 2>/dev/null || echo "неизвестно")
-print_info "Swap: ${SWAP_SIZE:-0} байт активно"
-BBR_STATUS=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo "неизвестно")
-print_info "BBR: ${BBR_STATUS}"
+# Внешний IP - улучшенная версия с резервными вариантами
+EXTERNAL_IP=$(curl -s4 https://api.ipify.org 2>/dev/null || \
+              curl -s4 https://ipinfo.io/ip 2>/dev/null || \
+              curl -s4 https://icanhazip.com 2>/dev/null || \
+              curl -s4 https://ifconfig.me/ip 2>/dev/null || \
+              echo "не удалось определить")
+print_info "Внешний IP-адрес: ${EXTERNAL_IP}"
 
-# Статус NVMe/SSD оптимизации
-SCHEDULER_STATUS=$(cat /sys/block/"$ROOT_DEVICE"/queue/scheduler 2>/dev/null || echo "неизвестно")
-print_info "Планировщик диска: ${SCHEDULER_STATUS:-неизвестно}"
-TRIM_STATUS=$(grep -q 'discard' /etc/fstab 2>/dev/null && echo "включен" || echo "отключен")
-print_info "TRIM для SSD: $TRIM_STATUS"
-
-echo -e "${RED}\033[1m❗ Рекомендуется перезагрузить сервер для применения всех оптимизаций: reboot\033[0m"
-print_warning "Настройка сервера завершена!"
+print_warning "❗ Рекомендуется перезагрузить сервер для применения всех оптимизаций: reboot"
+print_success "Настройка сервера завершена!"
