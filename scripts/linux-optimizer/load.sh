@@ -256,10 +256,10 @@ print_info "Swap: ${SWAP_SIZE:-0} байт активно"
 BBR_STATUS=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo "неизвестно")
 
 # Статус NVMe/SSD оптимизации
+print_info "TRIM для SSD: $TRIM_STATUS"
 SCHEDULER_STATUS=$(cat /sys/block/"$ROOT_DEVICE"/queue/scheduler 2>/dev/null || echo "неизвестно")
 print_info "Планировщик диска: ${SCHEDULER_STATUS:-неизвестно}"
 TRIM_STATUS=$(grep -q 'discard' /etc/fstab 2>/dev/null && echo "включен" || echo "отключен")
-print_info "TRIM для SSD: $TRIM_STATUS"
 
 # Внешний IP - улучшенная версия с резервными вариантами
 EXTERNAL_IP=$(curl -s4 https://api.ipify.org 2>/dev/null || \
