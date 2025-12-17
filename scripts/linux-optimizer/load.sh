@@ -40,6 +40,25 @@ DEBIAN_FRONTEND=noninteractive apt-get autoremove -yqq >/dev/null 2>&1
 apt-get clean >/dev/null 2>&1
 print_success "Система обновлена"
 
+# =============== УМНЫЕ ФУНКЦИИ ДЛЯ SYSCTL ===============
+apply_sysctl_optimization() {
+    local key="$1"
+    local value="$2"
+    local comment="$3"
+    
+    # Удаляем все существующие строки с этим ключом (включая комментарии)
+    sed -i "/^[[:space:]]*$key[[:space:]]*=/d" /etc/sysctl.conf
+    
+    # Добавляем новую строку с комментарием
+    if [ -n "$comment" ]; then
+        echo "# $comment" >> /etc/sysctl.conf
+    fi
+    echo "$key=$value" >> /etc/sysctl.conf
+    
+    # Применяем изменение немедленно
+    sysctl -w "$key=$value" >/dev/null 2>&1
+}
+
 # =============== ШАГ 1: УСТАНОВКА ПАКЕТОВ ===============
 print_step "Установка пакетов"
 PACKAGES=("curl" "net-tools" "ufw" "fail2ban" "unzip" "hdparm" "nvme-cli")
