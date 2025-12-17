@@ -248,6 +248,7 @@ print_success "Fail2Ban активирован для защиты SSH (порт
 printf '\033c'  # Самый надежный способ очистки экрана
 # =============== ФИНАЛЬНАЯ СВОДКА ===============
 print_step "ФИНАЛЬНАЯ СВОДКА"
+print_success "Настройка сервера завершена!"
 
 # Swap и BBR
 BBR_STATUS=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo "неизвестно")
@@ -296,5 +297,3 @@ if [[ "$UFW_STATUS" == *"active"* ]]; then
 else
     print_warning "UFW: неактивен (защита сети отключена!)"
 fi
-
-print_success "Настройка сервера завершена!"
