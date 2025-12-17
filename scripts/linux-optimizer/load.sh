@@ -273,6 +273,8 @@ EOF
 systemctl restart fail2ban 2>/dev/null || true
 print_success "Fail2Ban активирован для защиты SSH (порт: $SSH_PORT)"
 
+clear
+
 # =============== ФИНАЛЬНАЯ СВОДКА ===============
 print_step "ФИНАЛЬНАЯ СВОДКА"
 
