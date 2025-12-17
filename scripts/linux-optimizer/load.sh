@@ -316,12 +316,13 @@ EOF
 
 systemctl restart fail2ban 2>/dev/null || true
 print_success "Fail2Ban активирован для защиты SSH (порт: $SSH_PORT)"
+
 printf '\033c'  # Самый надежный способ очистки экрана
+
 # =============== ФИНАЛЬНАЯ СВОДКА ===============
 print_step "ФИНАЛЬНАЯ СВОДКА"
 print_success "Настройка сервера завершена!"
 print_success "Ядро оптимизировано!"
-print_success "ZRAM настроен"
 
 # Swap и BBR
 BBR_STATUS=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo "неизвестно")
@@ -350,7 +351,6 @@ if command -v zramctl &> /dev/null && zramctl | grep -q zram; then
     done < <(zramctl)
 else
     print_warning "ZRAM: не настроен"
-    print_info "  Рекомендуется для слабых VPS — экономия диска и прирост скорости"
 fi
 
 # Открытые порты
