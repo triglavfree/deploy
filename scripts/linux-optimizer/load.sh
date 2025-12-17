@@ -472,8 +472,22 @@ if command -v zramctl &> /dev/null && zramctl | grep -q zram; then
         print_info "  → $name: $compr → $total ($algo)"
     done < <(zramctl)
 else
+    # Проверяем, почему ZRAM недоступен
+    ZRAM_REASON=""
+    if ! grep -q zram /proc/modules 2>/dev/null && ! modprobe -n -v zram 2>/dev/null | grep -q 'insmod' 2>/dev/null; then
+        ZRAM_REASON=" (модуль ядра zram недоступен)"
+    elif ! command -v zramctl &> /dev/null; then
+        ZRAM_REASON=" (пакет zram-tools не установлен)"
+    else
+        ZRAM_REASON=" (ZRAM не активирован)"
+    fi
+    
     SWAP_SIZE=$(swapon --show --bytes | awk 'NR==2 {print $3}' 2>/dev/null || echo "неизвестно")
-    print_info "Swap: ${SWAP_SIZE:-0} байт активно"
+    if [[ "$SWAP_SIZE" != "неизвестно" ]] && [[ "$SWAP_SIZE" -gt 0 ]]; then
+        print_success "Swap-файл: ${SWAP_SIZE} байт активно${ZRAM_REASON}"
+    else
+        print_warning "Виртуальная память не настроена!${ZRAM_REASON}"
+    fi
 fi
 
 # Диск
@@ -483,7 +497,7 @@ SCHEDULER_STATUS=$(cat /sys/block/"$ROOT_DEVICE"/queue/scheduler 2>/dev/null || 
 print_info "Планировщик диска: ${SCHEDULER_STATUS:-неизвестно}"
 
 # Безопасность
-print_info "Открытые порты и соединения:"
+print_info "Открытые порты:"
 ss -tuln | grep -E ':(22|80|443)\s' || print_warning "Не найдены ожидаемые порты (22, 80, 443)"
 
 SSH_ACCESS=$(ss -tuln | grep ":$SSH_PORT" | grep LISTEN 2>/dev/null || echo "не слушается")
@@ -508,4 +522,3 @@ fi
 
 print_warning "❗ ВАЖНО: Сохраните приватный ключ /root/.ssh/id_ed25519 и не теряйте его — пароли отключены!"
 print_info "Рекомендуется перезагрузить сервер для применения всех оптимизаций: reboot"
-print_info "Список всех открытых сетевых соединений и прослушиваемых портовя: lsof -i -P -n"
