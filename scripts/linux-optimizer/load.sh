@@ -453,6 +453,7 @@ print_info "BBR: ${BBR_STATUS}"
 # Диск
 TRIM_STATUS=$(grep -q 'discard' /etc/fstab 2>/dev/null && echo "включен" || echo "отключен")
 print_info "TRIM для SSD: $TRIM_STATUS"
+print_info "Оптимизация ядра: Универсальная"
 SCHEDULER_STATUS=$(cat /sys/block/"$ROOT_DEVICE"/queue/scheduler 2>/dev/null || echo "неизвестно")
 print_info "Планировщик диска: ${SCHEDULER_STATUS:-неизвестно}"
 
@@ -519,6 +520,6 @@ else
     print_warning "UFW: неактивен (защита сети отключена!)"
 fi
 
-print_success "Ядро оптимизировано!"
-print_success "Настройка сервера завершена!"
+print_success "Ядро оптимизировано"
+print_success "Оптимизация сервера завершена!"
 print_warning "Рекомендуется перезагрузить сервер для применения всех оптимизаций: reboot"
