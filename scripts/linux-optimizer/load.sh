@@ -444,10 +444,10 @@ printf '\033c'
 
 # =============== ФИНАЛЬНАЯ СВОДКА ===============
 print_step "ФИНАЛЬНАЯ СВОДКА"
-print_success "Настройка сервера завершена!"
-print_success "Ядро оптимизировано!"
+print_success "Ядро оптимизировано"
 
 # Основная информация
+print_warning "Сохраните приватный ключ /root/.ssh/id_ed25519 — пароли отключены!"
 EXTERNAL_IP=$(curl -s4 https://api.ipify.org 2>/dev/null || \
               curl -s4 https://ipinfo.io/ip 2>/dev/null || \
               curl -s4 https://icanhazip.com 2>/dev/null || \
@@ -520,5 +520,5 @@ else
     print_warning "UFW: неактивен (защита сети отключена!)"
 fi
 
-print_warning "❗ ВАЖНО: Сохраните приватный ключ /root/.ssh/id_ed25519 и не теряйте его — пароли отключены!"
 print_info "Рекомендуется перезагрузить сервер для применения всех оптимизаций: reboot"
+print_success "Настройка сервера завершена!"
