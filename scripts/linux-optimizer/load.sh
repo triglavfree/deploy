@@ -183,6 +183,42 @@ else
     print_warning "Swap уже активен"
 fi
 
+# =============== ШАГ 4.5: ОПТИМИЗАЦИЯ ДЛЯ СЛАБЫХ VPS ===============
+print_step "Оптимизация для слабых VPS"
+
+# 1. Установка ZRAM
+print_info "→ Установка ZRAM вместо дискового swap"
+apt-get install -y zram-tools >/dev/null
+echo "ALLOCATION=$(free -m | awk '/Mem:/ {printf "%d", $2/2}')" > /etc/default/zramswap
+echo "COMP_ALGO=zstd" >> /etc/default/zramswap
+systemctl enable zramswap --now >/dev/null
+print_success "ZRAM настроен (экономия диска + скорость)"
+
+# 2. Отключение ненужных сервисов
+print_info "→ Отключение ненужных сервисов"
+systemctl mask systemd-resolved systemd-networkd NetworkManager \
+           snapd apt-daily.service apt-daily-upgrade.service 2>/dev/null
+print_success "Ненужные сервисы отключены"
+
+# 3. Современные sysctl-настройки для слабых VPS
+print_info "→ Применение оптимизаций ядра для слабых серверов"
+cat >> /etc/sysctl.conf <<EOF
+# Экономия памяти для слабых VPS
+vm.min_free_kbytes=65536
+vm.overcommit_memory=1
+vm.vfs_cache_pressure=100
+
+# Сетевая оптимизация для слабых CPU
+net.core.somaxconn=1024
+net.core.netdev_max_backlog=2000
+net.ipv4.tcp_max_syn_backlog=2048
+net.ipv4.tcp_syncookies=1
+net.ipv4.tcp_tw_reuse=1
+net.ipv4.tcp_fin_timeout=15
+EOF
+sysctl -p >/dev/null
+print_success "Ядро оптимизировано для низких ресурсов"
+
 # =============== ШАГ 5: СЕТЕВАЯ ОПТИМИЗАЦИЯ ===============
 print_step "Сетевая оптимизация IPv4"
 OPTS=(
