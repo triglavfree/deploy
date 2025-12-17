@@ -142,47 +142,88 @@ if [[ "$DISK_TYPE" == "nvme" ]] && command -v nvme &> /dev/null; then
 fi
 print_success "Оптимизация диска завершена"
 
-# =============== ШАГ 4: НАСТРОЙКА ВИРТУАЛЬНОЙ ПАМЯТИ (SWAP/ZRAM) ===============
-print_step "Настройка виртуальной памяти (Swap/ZRAM)"
+# =============== ШАГ 4: НАСТРОЙКА ВИРТУАЛЬНОЙ ПАМЯТИ (ZRAM или SWAP) ===============
+print_step "Настройка виртуальной памяти (авто-определение)"
 
 TOTAL_MEM_MB=$(free -m | awk '/^Mem:/{print $2}')
 print_info "Обнаружено RAM: ${TOTAL_MEM_MB} MB"
 
-if [ "$TOTAL_MEM_MB" -le 2048 ]; then
-    # ZRAM для слабых VPS
-    print_info "→ RAM ≤ 2GB: настройка ZRAM (рекомендуется)"
-    
-    # Отключаем существующий swap
-    if swapon --show | grep -q '/swapfile'; then
-        swapoff /swapfile 2>/dev/null
-        sed -i '/\/swapfile/d' /etc/fstab 2>/dev/null
-        rm -f /swapfile
-        print_info "  Старый swap-файл отключён"
+# Функция для проверки наличия модуля zram
+zram_available() {
+    # Проверяем, загружен ли модуль
+    if grep -q zram /proc/modules 2>/dev/null; then
+        return 0
     fi
-    
-    # Устанавливаем ZRAM
-    if ! command -v zramctl &> /dev/null; then
-        DEBIAN_FRONTEND=noninteractive apt-get install -y -qq zram-tools >/dev/null 2>&1
+    # Проверяем, доступен ли модуль для загрузки
+    if modprobe -n -v zram 2>/dev/null | grep -q 'insmod' 2>/dev/null; then
+        return 0
     fi
+    # Проверяем наличие файла модуля
+    if find /lib/modules/$(uname -r) -name 'zram.ko*' -type f 2>/dev/null | grep -q .; then
+        return 0
+    fi
+    return 1
+}
+
+if zram_available; then
+    # === ZRAM доступен - используем его для слабых VPS ===
+    print_info "→ Модуль zram доступен"
     
-    ZRAM_SIZE_MB=$(( TOTAL_MEM_MB / 2 ))
-    [ "$ZRAM_SIZE_MB" -lt 256 ] && ZRAM_SIZE_MB=256
-    [ "$ZRAM_SIZE_MB" -gt 2048 ] && ZRAM_SIZE_MB=2048
-    
-    cat > /etc/default/zramswap <<EOF
+    if [ "$TOTAL_MEM_MB" -le 2048 ]; then
+        print_info "→ RAM ≤ 2GB: настройка ZRAM"
+        
+        # Удаляем существующий swap-файл
+        if swapon --show | grep -q '/swapfile'; then
+            swapoff /swapfile 2>/dev/null
+            sed -i '/\/swapfile/d' /etc/fstab 2>/dev/null
+            rm -f /swapfile
+            print_info "  Старый swap-файл отключён"
+        fi
+        
+        # Устанавливаем zram-tools если нужно
+        if ! command -v zramctl &> /dev/null; then
+            DEBIAN_FRONTEND=noninteractive apt-get install -y -qq zram-tools >/dev/null 2>&1
+        fi
+        
+        # Рассчитываем размер ZRAM
+        ZRAM_SIZE_MB=$(( TOTAL_MEM_MB / 2 ))
+        [ "$ZRAM_SIZE_MB" -lt 256 ] && ZRAM_SIZE_MB=256
+        [ "$ZRAM_SIZE_MB" -gt 2048 ] && ZRAM_SIZE_MB=2048
+        
+        # Проверяем поддержку zstd
+        if cat /proc/crypto 2>/dev/null | grep -q 'zstd'; then
+            COMP_ALGO="zstd"
+        else
+            COMP_ALGO="lzo"
+        fi
+        
+        # Настраиваем ZRAM
+        cat > /etc/default/zramswap <<EOF
 ALLOCATION=$ZRAM_SIZE_MB
-COMP_ALGO=zstd
+COMP_ALGO=$COMP_ALGO
 ENABLED=true
 EOF
-    
-    systemctl enable zramswap --now >/dev/null 2>&1
-    print_success "ZRAM настроен: ${ZRAM_SIZE_MB}MB (алгоритм: zstd)"
-    
-else
-    # Обычный swap для мощных серверов
-    print_info "→ RAM > 2GB: создаём swap-файл"
-    if ! swapon --show | grep -q '/swapfile'; then
-        if [ ! -f /swapfile ]; then
+        
+        systemctl enable zramswap --now >/dev/null 2>&1
+        
+        # Проверяем, что ZRAM запустился
+        if zramctl | grep -q zram; then
+            print_success "ZRAM настроен: ${ZRAM_SIZE_MB}MB (алгоритм: $COMP_ALGO)"
+        else
+            print_warning "ZRAM не запустился, создаём резервный swap-файл"
+            # Резервный вариант - swap-файл
+            SWAP_SIZE_GB=$(( TOTAL_MEM_MB <= 1024 ? 1 : 2 ))
+            fallocate -l ${SWAP_SIZE_GB}G /swapfile || dd if=/dev/zero of=/swapfile bs=1M count=$((SWAP_SIZE_GB * 1024))
+            chmod 600 /swapfile
+            mkswap /swapfile >/dev/null
+            swapon /swapfile
+            echo '/swapfile none swap sw 0 0' >> /etc/fstab
+            print_success "Резервный swap ${SWAP_SIZE_GB}GB создан"
+        fi
+    else
+        # Для >2GB RAM используем swap-файл даже если ZRAM доступен
+        print_info "→ RAM > 2GB: создаём swap-файл"
+        if ! swapon --show | grep -q '/swapfile'; then
             fallocate -l 2G /swapfile || dd if=/dev/zero of=/swapfile bs=1M count=2048
             chmod 600 /swapfile
             mkswap /swapfile >/dev/null
@@ -190,14 +231,34 @@ else
             echo '/swapfile none swap sw 0 0' >> /etc/fstab
             print_success "Swap 2 GB создан"
         else
-            swapon /swapfile
-            print_success "Swap активирован из существующего файла"
+            print_warning "Swap уже активен"
         fi
+    fi
+else
+    # === ZRAM недоступен - используем swap-файл ===
+    print_warning "→ Модуль zram недоступен (типично для VPS)"
+    print_info "→ Создаём swap-файл"
+    
+    # Определяем размер swap-файла
+    if [ "$TOTAL_MEM_MB" -le 1024 ]; then
+        SWAP_SIZE_GB=1
+    elif [ "$TOTAL_MEM_MB" -le 2048 ]; then
+        SWAP_SIZE_GB=2
+    else
+        SWAP_SIZE_GB=2
+    fi
+    
+    if ! swapon --show | grep -q '/swapfile'; then
+        fallocate -l ${SWAP_SIZE_GB}G /swapfile || dd if=/dev/zero of=/swapfile bs=1M count=$((SWAP_SIZE_GB * 1024))
+        chmod 600 /swapfile
+        mkswap /swapfile >/dev/null
+        swapon /swapfile
+        echo '/swapfile none swap sw 0 0' >> /etc/fstab
+        print_success "Swap ${SWAP_SIZE_GB}GB создан (резервная опция)"
     else
         print_warning "Swap уже активен"
     fi
 fi
-
 # =============== ШАГ 5: ОПТИМИЗАЦИЯ ЯДРА ===============
 print_step "Применение оптимизаций ядра"
 
