@@ -202,7 +202,16 @@ sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd
 sed -i 's/^#\?ChallengeResponseAuthentication.*/ChallengeResponseAuthentication no/' /etc/ssh/sshd_config
 sed -i 's/^#\?UsePAM.*/UsePAM no/' /etc/ssh/sshd_config
 
-systemctl reload sshd 2>/dev/null || systemctl restart sshd
+# Определение правильного имени службы SSH
+SSH_SERVICE="ssh"
+if ! systemctl is-active --quiet "$SSH_SERVICE" 2>/dev/null; then
+    if systemctl is-active --quiet "sshd" 2>/dev/null; then
+        SSH_SERVICE="sshd"
+    fi
+fi
+
+print_info "Перезагрузка службы SSH ($SSH_SERVICE)..."
+systemctl reload "$SSH_SERVICE" 2>/dev/null || systemctl restart "$SSH_SERVICE"
 print_success "Пароли в SSH отключены. Доступ только по ключу!"
 
 # =============== ШАГ 8: UFW ===============
