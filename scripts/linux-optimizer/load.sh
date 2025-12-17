@@ -60,54 +60,87 @@ else
     print_warning "BBR уже активен"
 fi
 
-# =============== ШАГ 3: ОПТИМИЗАЦИЯ NVMe/SSD ===============
-print_step "Оптимизация NVMe/SSD диска"
+# =============== ШАГ 3: ОПТИМИЗАЦИЯ ДИСКА (NVMe/SSD/VirtIO) ===============
+print_step "Оптимизация диска"
 
 # Определение корневого устройства
 ROOT_DEVICE=$(df / --output=source | tail -1 | sed 's/\/dev\///' | sed 's/[0-9]*$//')
 print_info "Корневое устройство: $ROOT_DEVICE"
 
-# 1. Настройка планировщика ввода-вывода
+# === ОПРЕДЕЛЕНИЕ ТИПА ДИСКА ===
+DISK_TYPE="hdd"
+if [[ "$ROOT_DEVICE" == nvme* ]]; then
+    DISK_TYPE="nvme"
+elif [ -f "/sys/block/$ROOT_DEVICE/device/model" ] && grep -qi "nvme" "/sys/block/$ROOT_DEVICE/device/model" 2>/dev/null; then
+    DISK_TYPE="nvme"
+elif [ -f "/sys/block/$ROOT_DEVICE/queue/rotational" ] && [ "$(cat /sys/block/$ROOT_DEVICE/queue/rotational 2>/dev/null)" = "0" ]; then
+    DISK_TYPE="ssd"
+elif [[ "$ROOT_DEVICE" == vda || "$ROOT_DEVICE" == vdb || "$ROOT_DEVICE" == sda || "$ROOT_DEVICE" == sdb ]]; then
+    # Эвристика: vda/sda на VPS — часто SSD-хранилище, но без TRIM
+    DISK_TYPE="virtio"
+else
+    DISK_TYPE="hdd"
+fi
+print_info "Определённый тип диска: $DISK_TYPE"
+
+# === 1. НАСТРОЙКА ПЛАНИРОВЩИКА ВВОДА-ВЫВОДА ===
 if [ -f /sys/block/"$ROOT_DEVICE"/queue/scheduler ]; then
-    CURRENT_SCHEDULER=$(cat /sys/block/"$ROOT_DEVICE"/queue/scheduler 2>/dev/null | grep -o '\[.*\]' | tr -d '[]' || true)
+    CURRENT_SCHEDULER=$(cat /sys/block/"$ROOT_DEVICE"/queue/scheduler 2>/dev/null | grep -o '\[.*\]' | tr -d '[]' || echo "unknown")
     print_info "Текущий планировщик: ${CURRENT_SCHEDULER:-неизвестно}"
-    
-    # Улучшенное определение типа диска
-    if [[ "$ROOT_DEVICE" == nvme* ]] || (grep -q "nvme" "/sys/block/$ROOT_DEVICE/device/model" 2>/dev/null); then
-        # Для NVMe используем 'none'
-        if [ "$CURRENT_SCHEDULER" != "none" ]; then
-            echo 'none' > /sys/block/"$ROOT_DEVICE"/queue/scheduler 2>/dev/null || true
-            print_success "Планировщик NVMe установлен в 'none'"
+
+    # Выбор целевого планировщика
+    if [[ "$DISK_TYPE" == "nvme" ]]; then
+        TARGET_SCHEDULER="none"
+    elif [[ "$DISK_TYPE" == "virtio" ]]; then
+        TARGET_SCHEDULER="none"   # Лучше всего для VPS
+    elif [[ "$DISK_TYPE" == "ssd" ]]; then
+        TARGET_SCHEDULER="mq-deadline"
+    else
+        TARGET_SCHEDULER="mq-deadline"  # HDD: mq-deadline или bfq, но mq-deadline стабильнее
+    fi
+
+    if [[ "$CURRENT_SCHEDULER" != "$TARGET_SCHEDULER" ]]; then
+        if echo "$TARGET_SCHEDULER" > /sys/block/"$ROOT_DEVICE"/queue/scheduler 2>/dev/null; then
+            print_success "Планировщик установлен в '$TARGET_SCHEDULER'"
         else
-            print_warning "Планировщик NVMe уже оптимизирован"
+            print_warning "Не удалось установить планировщик '$TARGET_SCHEDULER'"
         fi
     else
-        # Для SATA SSD используем 'mq-deadline'
-        if [ "$CURRENT_SCHEDULER" != "mq-deadline" ]; then
-            echo 'mq-deadline' > /sys/block/"$ROOT_DEVICE"/queue/scheduler 2>/dev/null || true
-            print_success "Планировщик SSD установлен в 'mq-deadline'"
-        else
-            print_warning "Планировщик SSD уже оптимизирован"
-        fi
+        print_warning "Планировщик уже оптимизирован: $CURRENT_SCHEDULER"
     fi
 else
-    print_warning "Не удалось оптимизировать планировщик (устройство не найдено)"
-fi
-
-# 2. Включение TRIM в /etc/fstab - улучшенная версия
-if ! grep -q 'discard' /etc/fstab; then
-    # Более надежное добавление discard для корневого раздела
-    if grep -q " / " /etc/fstab; then
-        sed -i '/\/ /s/\(defaults[^,]*\)/\1,discard/' /etc/fstab
-        print_success "TRIM для SSD включен в /etc/fstab"
+    if [[ "$DISK_TYPE" == "nvme" ]]; then
+        print_success "NVMe: планировщик не используется (аппаратное управление)"
     else
-        print_warning "Не удалось добавить TRIM (корневой раздел не найден в fstab)"
+        print_warning "Файл scheduler недоступен (возможно, NVMe или нестандартное устройство)"
     fi
-else
-    print_warning "TRIM уже включен в /etc/fstab"
 fi
 
-# 3. Оптимизация параметров ядра для SSD
+# === 2. УПРАВЛЕНИЕ TRIM (discard) ===
+if [[ "$DISK_TYPE" == "nvme" || "$DISK_TYPE" == "ssd" ]]; then
+    # TRIM имеет смысл только для настоящих SSD/NVMe
+    if ! grep -q 'discard' /etc/fstab; then
+        if grep -q " / " /etc/fstab; then
+            sed -i '/\/ /s/\(defaults[^,]*\)/\1,discard/' /etc/fstab
+            print_success "TRIM (discard) включён — актуально для SSD/NVMe"
+        else
+            print_warning "Не удалось включить TRIM (корневой раздел не найден в fstab)"
+        fi
+    else
+        print_warning "TRIM (discard) уже включён"
+    fi
+else
+    # Для virtio/HDD — отключаем discard, если есть
+    if grep -q 'discard' /etc/fstab; then
+        sed -i 's/,discard//g; s/discard,//g; s/discard//g' /etc/fstab
+        print_success "TRIM (discard) отключён — не поддерживается для $DISK_TYPE"
+    else
+        print_info "TRIM не применяется для $DISK_TYPE (корректно)"
+    fi
+fi
+
+# === ШАГ 3: ОПТИМИЗАЦИЯ ПАРАМЕТРОВ ЯДРА ===
+# Применяем SSD-оптимизации даже для virtio (часто SSD под капотом)
 SSD_OPTS=(
     "vm.swappiness=10"
     "vm.vfs_cache_pressure=50"
@@ -122,15 +155,15 @@ for opt in "${SSD_OPTS[@]}"; do
     grep -q "^$key=" /etc/sysctl.conf || echo "$opt" >> /etc/sysctl.conf
 done
 sysctl -p >/dev/null
-print_success "Параметры SSD оптимизации применены"
+print_success "Параметры ядра для SSD/VPS применены"
 
-# 4. Проверка состояния NVMe (если применимо)
-if command -v nvme &> /dev/null && ([[ "$ROOT_DEVICE" == nvme* ]] || grep -q "nvme" "/sys/block/$ROOT_DEVICE/device/model" 2>/dev/null); then
+# === 4. ПРОВЕРКА NVMe (только если NVMe) ===
+if [[ "$DISK_TYPE" == "nvme" ]] && command -v nvme &> /dev/null; then
     print_info "Проверка состояния NVMe:"
     nvme smart-log "/dev/$ROOT_DEVICE" 2>/dev/null | grep -E "(critical|temperature|media|wear)" || true
 fi
 
-print_success "NVMe/SSD оптимизация завершена"
+print_success "Оптимизация диска завершена"
 
 # =============== ШАГ 4: SWAP 2GB ===============
 print_step "Создание swap-файла 2 GB (если отсутствует)"
