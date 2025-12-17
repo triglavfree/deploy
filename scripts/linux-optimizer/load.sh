@@ -483,7 +483,7 @@ SCHEDULER_STATUS=$(cat /sys/block/"$ROOT_DEVICE"/queue/scheduler 2>/dev/null || 
 print_info "Планировщик диска: ${SCHEDULER_STATUS:-неизвестно}"
 
 # Безопасность
-print_info "Открытые порты:"
+print_info "Открытые порты и соединения:"
 ss -tuln | grep -E ':(22|80|443)\s' || print_warning "Не найдены ожидаемые порты (22, 80, 443)"
 
 SSH_ACCESS=$(ss -tuln | grep ":$SSH_PORT" | grep LISTEN 2>/dev/null || echo "не слушается")
@@ -508,3 +508,4 @@ fi
 
 print_warning "❗ ВАЖНО: Сохраните приватный ключ /root/.ssh/id_ed25519 и не теряйте его — пароли отключены!"
 print_info "Рекомендуется перезагрузить сервер для применения всех оптимизаций: reboot"
+print_info "Список всех открытых сетевых соединений и прослушиваемых портовя: lsof -i -P -n"
