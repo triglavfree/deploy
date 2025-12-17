@@ -7,6 +7,7 @@ GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
 BLUE='\033[0;36m'
 PURPLE='\033[0;35m'
+CYAN='\033[0;36m'  # ИСПРАВЛЕНО: добавлено определение CYAN
 NC='\033[0m'
 
 # =============== ФУНКЦИИ ===============
@@ -68,10 +69,11 @@ print_info "Корневое устройство: $ROOT_DEVICE"
 
 # 1. Настройка планировщика ввода-вывода
 if [ -f /sys/block/"$ROOT_DEVICE"/queue/scheduler ]; then
-    CURRENT_SCHEDULER=$(cat /sys/block/"$ROOT_DEVICE"/queue/scheduler | grep -o '\[.*\]' | tr -d '[]' || true)
-    print_info "Текущий планировщик: $CURRENT_SCHEDULER"
+    CURRENT_SCHEDULER=$(cat /sys/block/"$ROOT_DEVICE"/queue/scheduler 2>/dev/null | grep -o '\[.*\]' | tr -d '[]' || true)
+    print_info "Текущий планировщик: ${CURRENT_SCHEDULER:-неизвестно}"
     
-    if [[ "$ROOT_DEVICE" == nvme* ]]; then
+    # Улучшенное определение типа диска
+    if [[ "$ROOT_DEVICE" == nvme* ]] || (grep -q "nvme" "/sys/block/$ROOT_DEVICE/device/model" 2>/dev/null); then
         # Для NVMe используем 'none'
         if [ "$CURRENT_SCHEDULER" != "none" ]; then
             echo 'none' > /sys/block/"$ROOT_DEVICE"/queue/scheduler 2>/dev/null || true
@@ -92,10 +94,15 @@ else
     print_warning "Не удалось оптимизировать планировщик (устройство не найдено)"
 fi
 
-# 2. Включение TRIM в /etc/fstab
+# 2. Включение TRIM в /etc/fstab - улучшенная версия
 if ! grep -q 'discard' /etc/fstab; then
-    sed -i 's/defaults/defaults,discard/' /etc/fstab
-    print_success "TRIM для SSD включен в /etc/fstab"
+    # Более надежное добавление discard для корневого раздела
+    if grep -q " / " /etc/fstab; then
+        sed -i '/\/ /s/\(defaults[^,]*\)/\1,discard/' /etc/fstab
+        print_success "TRIM для SSD включен в /etc/fstab"
+    else
+        print_warning "Не удалось добавить TRIM (корневой раздел не найден в fstab)"
+    fi
 else
     print_warning "TRIM уже включен в /etc/fstab"
 fi
@@ -118,7 +125,7 @@ sysctl -p >/dev/null
 print_success "Параметры SSD оптимизации применены"
 
 # 4. Проверка состояния NVMe (если применимо)
-if command -v nvme &> /dev/null && [[ "$ROOT_DEVICE" == nvme* ]]; then
+if command -v nvme &> /dev/null && ([[ "$ROOT_DEVICE" == nvme* ]] || grep -q "nvme" "/sys/block/$ROOT_DEVICE/device/model" 2>/dev/null); then
     print_info "Проверка состояния NVMe:"
     nvme smart-log "/dev/$ROOT_DEVICE" 2>/dev/null | grep -E "(critical|temperature|media|wear)" || true
 fi
@@ -187,7 +194,7 @@ if [ ! -f "$SSH_KEY" ]; then
     chmod 600 "$SSH_DIR/authorized_keys"
     print_success "SSH-ключ создан: $SSH_KEY"
 else
-    if ! grep -q "$(cat ${SSH_KEY}.pub)" "$SSH_DIR/authorized_keys" 2>/dev/null; then
+    if ! grep -q "$(cat "${SSH_KEY}.pub")" "$SSH_DIR/authorized_keys" 2>/dev/null; then
         cat "${SSH_KEY}.pub" >> "$SSH_DIR/authorized_keys"
         chmod 600 "$SSH_DIR/authorized_keys"
     fi
@@ -202,17 +209,37 @@ sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd
 sed -i 's/^#\?ChallengeResponseAuthentication.*/ChallengeResponseAuthentication no/' /etc/ssh/sshd_config
 sed -i 's/^#\?UsePAM.*/UsePAM no/' /etc/ssh/sshd_config
 
-# Определение правильного имени службы SSH
-SSH_SERVICE="ssh"
-if ! systemctl is-active --quiet "$SSH_SERVICE" 2>/dev/null; then
-    if systemctl is-active --quiet "sshd" 2>/dev/null; then
+# ИСПРАВЛЕНО: НАДЕЖНОЕ ОПРЕДЕЛЕНИЕ ИМЕНИ СЛУЖБЫ SSH
+SSH_SERVICE=""
+# Проверяем наличие служб через systemctl
+if systemctl list-unit-files --quiet 2>/dev/null | grep -q '^ssh\.service'; then
+    SSH_SERVICE="ssh"
+elif systemctl list-unit-files --quiet 2>/dev/null | grep -q '^sshd\.service'; then
+    SSH_SERVICE="sshd"
+else
+    # Резервный метод: проверка запущенных процессов
+    if pgrep -x "sshd" >/dev/null 2>&1; then
         SSH_SERVICE="sshd"
+    elif pgrep -x "ssh" >/dev/null 2>&1; then
+        SSH_SERVICE="ssh"
+    else
+        print_warning "Не удалось точно определить имя службы SSH. Используем 'ssh' по умолчанию."
+        SSH_SERVICE="ssh"
     fi
 fi
 
+# ИСПРАВЛЕНО: Безопасная перезагрузка без разрыва текущего соединения
 print_info "Перезагрузка службы SSH ($SSH_SERVICE)..."
-systemctl reload "$SSH_SERVICE" 2>/dev/null || systemctl restart "$SSH_SERVICE"
-print_success "Пароли в SSH отключены. Доступ только по ключу!"
+if ! systemctl reload "$SSH_SERVICE" 2>/dev/null; then
+    systemctl restart "$SSH_SERVICE"
+fi
+
+# Проверка статуса службы
+if systemctl is-active --quiet "$SSH_SERVICE"; then
+    print_success "Пароли в SSH отключены. Доступ только по ключу!"
+else
+    print_warning "Служба SSH перезагружена, но статус неактивен. Проверьте конфигурацию."
+fi
 
 # =============== ШАГ 8: UFW ===============
 print_step "Настройка UFW"
@@ -227,30 +254,39 @@ print_success "UFW включён"
 
 # =============== ШАГ 9: FAIL2BAN ===============
 print_step "Настройка Fail2Ban"
+
+# Определяем текущий порт SSH
+SSH_PORT=$(grep -Po '^Port \K\d+' /etc/ssh/sshd_config 2>/dev/null || echo 22)
+
 cat > /etc/fail2ban/jail.d/sshd.local <<EOF
 [sshd]
 enabled = true
-port = ssh
+port = $SSH_PORT
 logpath = /var/log/auth.log
 maxretry = 3
 bantime = 1h
 findtime = 10m
 backend = systemd
+action = %(action_)s
 EOF
 
 systemctl restart fail2ban 2>/dev/null || true
-print_success "Fail2Ban активирован для защиты SSH"
+print_success "Fail2Ban активирован для защиты SSH (порт: $SSH_PORT)"
 
 # =============== ФИНАЛЬНАЯ СВОДКА ===============
 print_step "ФИНАЛЬНАЯ СВОДКА"
 
-# Внешний IP
-EXTERNAL_IP=$(curl -s https://api.ipify.org || curl -s https://ipinfo.io/ip || echo "не удалось определить")
+# Внешний IP - улучшенная версия с резервными вариантами
+EXTERNAL_IP=$(curl -s4 https://api.ipify.org 2>/dev/null || \
+              curl -s4 https://ipinfo.io/ip 2>/dev/null || \
+              curl -s4 https://icanhazip.com 2>/dev/null || \
+              curl -s4 https://ifconfig.me/ip 2>/dev/null || \
+              echo "не удалось определить")
 print_info "Внешний IP-адрес: ${EXTERNAL_IP}"
 
 # Открытые порты
 print_info "Открытые порты:"
-ss -tuln | grep -E ':(22|80|443)\s' || print_warning "Не найдены ожидаемые порты"
+ss -tuln | grep -E ':(22|80|443)\s' || print_warning "Не найдены ожидаемые порты (22, 80, 443)"
 
 # Путь к SSH-ключу
 print_info "Приватный SSH-ключ: /root/.ssh/id_ed25519"
@@ -260,22 +296,31 @@ print_info "  ssh -i /путь/к/id_ed25519 root@${EXTERNAL_IP}"
 # Статус Fail2Ban
 FAIL2BAN_SERVICE="fail2ban"
 if systemctl is-active --quiet "$FAIL2BAN_SERVICE"; then
-    print_success "Fail2Ban: активен"
+    print_success "Fail2Ban: активен (порт SSH: $SSH_PORT)"
 else
     print_warning "Fail2Ban: неактивен"
 fi
 
 # Swap и BBR
-SWAP_SIZE=$(swapon --show --bytes | awk 'NR==2 {print $3}')
+SWAP_SIZE=$(swapon --show --bytes | awk 'NR==2 {print $3}' 2>/dev/null || echo "неизвестно")
 print_info "Swap: ${SWAP_SIZE:-0} байт активно"
-BBR_STATUS=$(sysctl -n net.ipv4.tcp_congestion_control)
+BBR_STATUS=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo "неизвестно")
 print_info "BBR: ${BBR_STATUS}"
 
 # Статус NVMe/SSD оптимизации
 SCHEDULER_STATUS=$(cat /sys/block/"$ROOT_DEVICE"/queue/scheduler 2>/dev/null || echo "неизвестно")
-print_info "Планировщик диска: $SCHEDULER_STATUS"
-TRIM_STATUS=$(grep 'discard' /etc/fstab 2>/dev/null && echo "включен" || echo "отключен")
+print_info "Планировщик диска: ${SCHEDULER_STATUS:-неизвестно}"
+TRIM_STATUS=$(grep -q 'discard' /etc/fstab 2>/dev/null && echo "включен" || echo "отключен")
 print_info "TRIM для SSD: $TRIM_STATUS"
 
+# Проверка доступа по SSH после отключения паролей
+SSH_ACCESS=$(ss -tuln | grep ":$SSH_PORT" | grep LISTEN 2>/dev/null || echo "не слушается")
+if [[ "$SSH_ACCESS" != "не слушается" ]]; then
+    print_success "SSH сервер слушает порт $SSH_PORT"
+else
+    print_error "SSH сервер не слушает порт $SSH_PORT! Проверьте конфигурацию!"
+fi
+
 print_success "Настройка сервера завершена!"
-print_warning "❗ Сохраните приватный ключ и не теряйте его — пароли отключены!"
+print_warning "❗ ВАЖНО: Сохраните приватный ключ /root/.ssh/id_ed25519 и не теряйте его — пароли отключены!"
+print_info "Рекомендуется перезагрузить сервер для применения всех оптимизаций: reboot"
