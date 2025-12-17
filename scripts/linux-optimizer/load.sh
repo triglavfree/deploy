@@ -174,34 +174,7 @@ done
 sysctl -p >/dev/null
 print_success "Сетевые параметры применены"
 
-# =============== ШАГ 6: SSH — ПРОВЕРКА И ГЕНЕРАЦИЯ КЛЮЧА ===============
-print_step "Проверка и настройка SSH-ключа root"
-
-SSH_DIR="/root/.ssh"
-SSH_KEY="$SSH_DIR/id_ed25519"
-
-if [ ! -d "$SSH_DIR" ]; then
-    mkdir -p "$SSH_DIR"
-    chmod 700 "$SSH_DIR"
-fi
-
-if [ ! -f "$SSH_KEY" ]; then
-    print_info "SSH-ключ не найден. Генерация нового ключа..."
-    ssh-keygen -t ed25519 -f "$SSH_KEY" -N "" -C "root@$(hostname)"
-    chmod 600 "$SSH_KEY"
-    chmod 644 "${SSH_KEY}.pub"
-    cat "${SSH_KEY}.pub" >> "$SSH_DIR/authorized_keys"
-    chmod 600 "$SSH_DIR/authorized_keys"
-    print_success "SSH-ключ создан: $SSH_KEY"
-else
-    if ! grep -q "$(cat "${SSH_KEY}.pub")" "$SSH_DIR/authorized_keys" 2>/dev/null; then
-        cat "${SSH_KEY}.pub" >> "$SSH_DIR/authorized_keys"
-        chmod 600 "$SSH_DIR/authorized_keys"
-    fi
-    print_success "SSH-ключ уже существует: $SSH_KEY"
-fi
-
-# =============== ШАГ 7: ОТКЛЮЧЕНИЕ ПАРОЛЕЙ В SSH ===============
+# =============== ШАГ 6: ОТКЛЮЧЕНИЕ ПАРОЛЕЙ В SSH ===============
 print_step "Отключение парольной аутентификации SSH"
 cp /etc/ssh/sshd_config /etc/ssh/sshd_config.bak.$(date +%s)
 
@@ -241,7 +214,7 @@ else
     print_warning "Служба SSH перезагружена, но статус неактивен. Проверьте конфигурацию."
 fi
 
-# =============== ШАГ 8: UFW ===============
+# =============== ШАГ 7: UFW ===============
 print_step "Настройка UFW"
 ufw --force reset >/dev/null 2>&1
 ufw default deny incoming comment 'Запретить входящий трафик'
@@ -252,7 +225,7 @@ ufw allow https comment 'HTTPS'
 ufw --force enable >/dev/null 2>&1
 print_success "UFW включён"
 
-# =============== ШАГ 9: FAIL2BAN ===============
+# =============== ШАГ 8: FAIL2BAN ===============
 print_step "Настройка Fail2Ban"
 
 # Определяем текущий порт SSH
