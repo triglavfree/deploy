@@ -325,16 +325,16 @@ fi
 
 # Сетевые оптимизации
 BBR_STATUS=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo "неизвестно")
-print_info "BBR: ${BBR_STATUS}"
+print_success "BBR: ${BBR_STATUS}"
 
 TRIM_STATUS=$(grep -q 'discard' /etc/fstab 2>/dev/null && echo "включён" || echo "отключён")
-print_info "TRIM для SSD: $TRIM_STATUS"
+print_success "TRIM для SSD: $TRIM_STATUS"
 
 SCHEDULER_STATUS="неизвестно"
 if [ -f "/sys/block/$ROOT_DEVICE/queue/scheduler" ]; then
     SCHEDULER_STATUS=$(cat "/sys/block/$ROOT_DEVICE/queue/scheduler" 2>/dev/null || echo "неизвестно")
 fi
-print_info "Планировщик диска: ${SCHEDULER_STATUS}"
+print_success "Планировщик диска: ${SCHEDULER_STATUS}"
 
 # === БРАНДМАУЭР: ЧТО РАЗРЕШЕНО ===
 print_info "Брандмауэр UFW:"
