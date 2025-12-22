@@ -4,6 +4,7 @@ set -e
 # =============== ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ===============
 RECOVERY_USER=""
 RECOVERY_FILE="/root/recovery_info.txt"
+CURRENT_IP="unknown"
 
 # =============== ЦВЕТА ===============
 RED='\033[0;31m'
@@ -21,11 +22,9 @@ print_warning(){ echo -e "${YELLOW}⚠ $1${NC}"; }
 print_error()  { echo -e "${RED}✗ $1${NC}" >&2; }
 print_info()   { echo -e "${BLUE}ℹ $1${NC}"; }
 
-# =============== ФУНКЦИИ ДЛЯ SYSCTL ===============
 apply_sysctl_optimization() {
     local key="$1"
     local value="$2"
-    
     sed -i "/^[[:space:]]*$key[[:space:]]*=/d" /etc/sysctl.conf 2>/dev/null
     echo "$key=$value" >> /etc/sysctl.conf
     sysctl -w "$key=$value" >/dev/null 2>&1 || true
@@ -42,7 +41,7 @@ if [ "$(id -u)" != "0" ]; then
 fi
 print_success "Запущено с правами root"
 
-# =============== РЕЗЕРВНЫЕ КОПИИ ===============
+# =============== РЕЗЕРВНЫЕ КОПИИ + ОПРЕДЕЛЕНИЕ IP ===============
 print_step "Создание резервных копий"
 BACKUP_DIR="/root/backup_$(date +%Y%m%d_%H%M%S)"
 mkdir -p "$BACKUP_DIR"
@@ -51,17 +50,19 @@ cp /etc/sysctl.conf "$BACKUP_DIR/" 2>/dev/null || true
 cp /etc/fstab "$BACKUP_DIR/" 2>/dev/null || true
 print_success "Резервные копии: $BACKUP_DIR"
 
+# Получаем текущий IP один раз для всего скрипта
+CURRENT_IP=$(curl -s4 https://api.ipify.org 2>/dev/null || echo "unknown")
+
 # =============== ПРОВЕРКА SSH ДОСТУПА ===============
 check_ssh_access_safety() {
     print_step "Проверка безопасности SSH доступа"
     
-    CURRENT_IP=$(curl -s4 https://api.ipify.org 2>/dev/null || echo "unknown")
     if [ "$CURRENT_IP" != "unknown" ]; then
         print_info "Ваш текущий IP: ${CURRENT_IP}"
     fi
     
     if [ -f /root/.ssh/authorized_keys ] && [ -s /root/.ssh/authorized_keys ]; then
-        print_success "✅ SSH ключи настроены — пароли можно безопасно отключать"
+        print_success "SSH ключи настроены — пароли можно безопасно отключать"
         RECOVERY_USER=""
         return 0
     fi
@@ -82,18 +83,17 @@ check_ssh_access_safety() {
     } > "$RECOVERY_FILE"
     chmod 600 "$RECOVERY_FILE"
     
-    print_warning "⚠️ ВНИМАНИЕ: SSH ключи не настроены!"
-    print_warning "✅ Создан аккаунт для восстановления:"
-    print_warning "   Пользователь: ${RECOVERY_USER}"
-    print_warning "   Пароль: ${TEMP_PASS}"
+    print_warning "ВНИМАНИЕ: SSH ключи не настроены!"
+    print_warning "Создан аккаунт для восстановления:"
+    print_warning "  Пользователь: ${RECOVERY_USER}"
+    print_warning "  Пароль: ${TEMP_PASS}"
     
     echo
     read -t 60 -rp "${YELLOW}Продолжить оптимизацию? (y/n) [n]: ${NC}" confirm
     confirm=${confirm:-n}
     
     if [[ ! "$confirm" =~ ^[yY]$ ]]; then
-        print_warning "Оптимизация отменена. Аккаунт остаётся для ручной настройки."
-        echo "Информация: $RECOVERY_FILE"
+        print_warning "Оптимизация отменена."
         exit 0
     fi
     
@@ -127,7 +127,7 @@ print_success "Система обновлена"
 
 # =============== УСТАНОВКА ПАКЕТОВ ===============
 print_step "Установка пакетов"
-PACKAGES=("curl" "net-tools" "ufw" "fail2ban" "unzip" "hdparm" "nvme-cli" "zram-tools" "lsof")
+PACKAGES=("curl" "net-tools" "ufw" "fail2ban" "unzip" "hdparm" "nvme-cli" "zram-tools")
 
 INSTALLED_PACKAGES=()
 for pkg in "${PACKAGES[@]}"; do
@@ -147,34 +147,31 @@ else
     print_success "Все пакеты уже установлены"
 fi
 
-# =============== UFW ===============
-print_step "Настройка UFW"
-
-CURRENT_IP=$(curl -s4 https://api.ipify.org 2>/dev/null || echo "unknown")
+# =============== UFW: ТОЛЬКО SSH ===============
+print_step "Настройка брандмауэра UFW"
 
 ufw --force reset >/dev/null 2>&1 || true
-ufw default deny incoming comment 'Запретить входящий трафик'
-ufw default allow outgoing comment 'Разрешить исходящий трафик'
-ufw allow ssh comment 'SSH'
-ufw allow http comment 'HTTP'
-ufw allow https comment 'HTTPS'
+ufw default deny incoming
+ufw default allow outgoing
+ufw allow ssh  # Только порт 22
 
+# Дополнительное правило для вашего IP
 if [ "$CURRENT_IP" != "unknown" ]; then
-    ufw allow from "$CURRENT_IP" to any port ssh comment "Доступ с вашего IP"
+    ufw allow from "$CURRENT_IP" to any port ssh
 fi
 
-print_warning "UFW будет включён через 5 секунд..."
+print_warning "UFW будет включён через 5 секунд (весь входящий трафик, кроме SSH, будет заблокирован)..."
 sleep 5
 ufw --force enable >/dev/null 2>&1 || true
 
 if ufw status | grep -qi "Status: active"; then
-    print_success "UFW включён"
+    print_success "UFW активирован: всё закрыто, кроме SSH"
 else
     print_warning "UFW не активирован"
 fi
 
 # =============== ОПТИМИЗАЦИЯ ЯДРА ===============
-print_step "Универсальная оптимизация ядра"
+print_step "Оптимизация ядра"
 
 TOTAL_MEM_MB=$(free -m | awk '/^Mem:/{print $2}')
 print_info "Обнаружено RAM: ${TOTAL_MEM_MB} MB"
@@ -183,28 +180,15 @@ declare -A KERNEL_OPTS
 KERNEL_OPTS=(
     ["net.core.default_qdisc"]="fq"
     ["net.ipv4.tcp_congestion_control"]="bbr"
-    ["net.core.rmem_max"]="16777216"
-    ["net.core.wmem_max"]="16777216"
     ["net.core.somaxconn"]="1024"
-    ["net.core.netdev_max_backlog"]="2000"
-    ["net.ipv4.tcp_rmem"]="4096 87380 16777216"
-    ["net.ipv4.tcp_wmem"]="4096 65536 16777216"
-    ["net.ipv4.tcp_max_syn_backlog"]="2048"
-    ["net.ipv4.tcp_slow_start_after_idle"]="0"
-    ["net.ipv4.tcp_notsent_lowat"]="16384"
-    ["net.ipv4.tcp_fastopen"]="3"
+    ["net.core.netdev_max_backlog"]="1000"
     ["net.ipv4.tcp_syncookies"]="1"
     ["net.ipv4.tcp_tw_reuse"]="1"
-    ["net.ipv4.tcp_fin_timeout"]="15"
     ["net.ipv4.ip_forward"]="1"
     ["vm.swappiness"]="30"
     ["vm.vfs_cache_pressure"]="100"
     ["vm.dirty_background_ratio"]="5"
-    ["vm.dirty_ratio"]="10"
-    ["vm.dirty_expire_centisecs"]="500"
-    ["vm.dirty_writeback_centisecs"]="100"
-    ["vm.min_free_kbytes"]="65536"
-    ["vm.overcommit_memory"]="1"
+    ["vm.dirty_ratio"]="15"
 )
 
 for key in "${!KERNEL_OPTS[@]}"; do
@@ -212,18 +196,13 @@ for key in "${!KERNEL_OPTS[@]}"; do
 done
 
 sysctl -p >/dev/null 2>&1 || true
-print_success "Все оптимизации ядра применены"
+print_success "Оптимизации ядра применены"
 
 # =============== SWAP ===============
-print_step "Настройка виртуальной памяти"
+print_step "Настройка swap-файла"
 
 if ! swapon --show | grep -q '/swapfile'; then
-    if [ "$TOTAL_MEM_MB" -le 1024 ]; then
-        SWAP_SIZE_GB=2
-    else
-        SWAP_SIZE_GB=2
-    fi
-    
+    SWAP_SIZE_GB=2
     fallocate -l ${SWAP_SIZE_GB}G /swapfile || dd if=/dev/zero of=/swapfile bs=1M count=$((SWAP_SIZE_GB * 1024))
     chmod 600 /swapfile
     mkswap /swapfile >/dev/null
@@ -252,7 +231,6 @@ if [ -f /root/.ssh/authorized_keys ] && [ -s /root/.ssh/authorized_keys ]; then
             SSH_SERVICE="sshd"
         else
             if pgrep -x "sshd" >/dev/null 2>&1; then SSH_SERVICE="sshd"
-            elif pgrep -x "ssh" >/dev/null 2>&1; then SSH_SERVICE="ssh"
             else SSH_SERVICE="ssh"; fi
         fi
         
@@ -269,7 +247,7 @@ if [ -f /root/.ssh/authorized_keys ] && [ -s /root/.ssh/authorized_keys ]; then
         fi
     else
         cp "$SSH_CONFIG_BACKUP" /etc/ssh/sshd_config
-        print_error "Ошибка в конфигурации SSH! Восстановлено из резервной копии."
+        print_error "Ошибка в конфигурации SSH! Восстановлено."
         exit 1
     fi
 else
@@ -277,7 +255,7 @@ else
 fi
 
 # =============== FAIL2BAN ===============
-print_step "Настройка Fail2Ban"
+print_step "Настройка Fail2Ban для защиты SSH"
 
 SSH_PORT=$(grep -Po '^Port \K\d+' /etc/ssh/sshd_config 2>/dev/null || echo 22)
 
@@ -295,16 +273,16 @@ action = %(action_)s
 EOF
 
 systemctl restart fail2ban 2>/dev/null || true
-print_success "Fail2Ban активирован для защиты SSH (порт: $SSH_PORT)"
+print_success "Fail2Ban настроен: защищает SSH (порт $SSH_PORT) от брутфорса"
 
 # =============== ФИНАЛЬНАЯ СВОДКА ===============
-printf '\033c'  # Очистка экрана
+printf '\033c'
 
-print_step "📚 ФИНАЛЬНАЯ СВОДКА"
+print_step "ФИНАЛЬНАЯ СВОДКА"
 
-# Восстановительный аккаунт (только если есть)
+# Восстановительный аккаунт (только если существует)
 if [ -n "$RECOVERY_USER" ] && id "$RECOVERY_USER" >/dev/null 2>&1; then
-    print_error " ВАЖНО: СОЗДАН АККАУНТ ДЛЯ ВОССТАНОВЛЕНИЯ! "
+    print_error "ВАЖНО: СОЗДАН АККАУНТ ДЛЯ ВОССТАНОВЛЕНИЯ!"
     if [ -f "$RECOVERY_FILE" ]; then
         while IFS= read -r line; do
             print_error "  $line"
@@ -317,88 +295,67 @@ fi
 
 # SSH статус
 if [ -f /root/.ssh/authorized_keys ] && [ -s /root/.ssh/authorized_keys ]; then
-    print_success "🔑 SSH: пароли отключены (только ключи)"
+    print_success "SSH: пароли отключены (только ключи)"
 else
-    print_warning "🔑 SSH: пароли ВКЛЮЧЕНЫ (ключей не обнаружено)"
+    print_warning "SSH: пароли ВКЛЮЧЕНЫ (ключей не обнаружено)"
 fi
 
 # Сетевые оптимизации
 BBR_STATUS=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo "неизвестно")
-print_info "🚀 BBR: ${BBR_STATUS}"
+print_info "BBR: ${BBR_STATUS}"
 
-# TRIM
 TRIM_STATUS=$(grep -q 'discard' /etc/fstab 2>/dev/null && echo "включён" || echo "отключён")
-print_info "🧹 TRIM для SSD: $TRIM_STATUS"
+print_info "TRIM для SSD: $TRIM_STATUS"
 
-# Планировщик диска
 SCHEDULER_STATUS="неизвестно"
 if [ -f "/sys/block/$ROOT_DEVICE/queue/scheduler" ]; then
     SCHEDULER_STATUS=$(cat "/sys/block/$ROOT_DEVICE/queue/scheduler" 2>/dev/null || echo "неизвестно")
 fi
-print_info "💾 Планировщик диска: ${SCHEDULER_STATUS}"
+print_info "Планировщик диска: ${SCHEDULER_STATUS}"
 
-# Внешний IP
-EXTERNAL_IP=$(curl -s4 https://api.ipify.org 2>/dev/null || \
-              curl -s4 https://ipinfo.io/ip 2>/dev/null || \
-              curl -s4 https://icanhazip.com 2>/dev/null || \
-              echo "не удалось определить")
-print_info "🌐 Внешний IP-адрес: ${EXTERNAL_IP}"
+EXTERNAL_IP=$(curl -s4 https://api.ipify.org 2>/dev/null || echo "не удалось определить")
+print_info "Внешний IP-адрес: ${EXTERNAL_IP}"
 
-# Открытые порты
-print_info "🔌 Открытые порты:"
-OPEN_PORTS=$(ss -tuln | grep -E ':(22|80|443)\s' 2>/dev/null)
-if [ -n "$OPEN_PORTS" ]; then
-    echo "$OPEN_PORTS" | while read -r line; do
-        print_info "  → $line"
-    done
-else
-    print_warning "  Не найдены ожидаемые порты (22, 80, 443)"
+# === ЧТО МЫ СДЕЛАЛИ С БРАНДМАУЭРОМ ===
+print_info "Брандмауэр UFW:"
+print_info "  → Все входящие подключения ЗАБЛОКИРОВАНЫ по умолчанию"
+print_info "  → Разрешён только входящий трафик на порт SSH ($SSH_PORT)"
+if [ "$CURRENT_IP" != "unknown" ]; then
+    print_info "  → Дополнительно разрешён SSH с вашего IP: $CURRENT_IP"
 fi
 
 # Виртуальная память
-print_info "🧠 Статус виртуальной памяти:"
-if command -v zramctl &> /dev/null && zramctl | grep -q zram; then
-    print_success "✅ ZRAM: активен (сжатый swap в RAM)"
-    while IFS= read -r line; do
-        if [[ "$line" == *"NAME"* ]]; then continue; fi
-        name=$(echo "$line" | awk '{print $1}')
-        algo=$(echo "$line" | awk '{print $2}')
-        compr=$(echo "$line" | awk '{print $3}')
-        total=$(echo "$line" | awk '{print $4}')
-        print_info "  → $name: $compr → $total ($algo)"
-    done < <(zramctl)
+print_info "Статус виртуальной памяти:"
+SWAP_SIZE_BYTES=$(swapon --show --bytes | awk 'NR==2 {print $3}' 2>/dev/null)
+if [[ -n "$SWAP_SIZE_BYTES" ]] && [[ "$SWAP_SIZE_BYTES" -gt 0 ]]; then
+    SWAP_SIZE_GB=$((SWAP_SIZE_BYTES / 1024 / 1024 / 1024))
+    print_success "Swap-файл: ${SWAP_SIZE_GB} GB активен"
 else
-    SWAP_SIZE_BYTES=$(swapon --show --bytes | awk 'NR==2 {print $3}' 2>/dev/null)
-    if [[ -n "$SWAP_SIZE_BYTES" ]] && [[ "$SWAP_SIZE_BYTES" -gt 0 ]]; then
-        SWAP_SIZE_GB=$((SWAP_SIZE_BYTES / 1024 / 1024 / 1024))
-        print_success "✅ Swap-файл: ${SWAP_SIZE_GB} GB активен"
-    else
-        print_warning "❌ Виртуальная память не настроена!"
-    fi
+    print_warning "Виртуальная память не настроена!"
 fi
 
-# SSH доступ
-if ss -tuln | grep -q ":$SSH_PORT\s.*LISTEN"; then
-    print_success "✅ SSH сервер слушает порт $SSH_PORT"
+# Проверка SSH (точная)
+if ss -ltn | grep -q ":$SSH_PORT\s"; then
+    print_success "SSH сервер активен и слушает порт $SSH_PORT"
 else
-    print_error "❌ SSH сервер не слушает порт $SSH_PORT!"
+    print_error "SSH сервер не слушает порт $SSH_PORT!"
 fi
 
-# Безопасность
+# Защита
 if systemctl is-active --quiet "fail2ban"; then
-    print_success "✅ Fail2Ban: активен (порт: $SSH_PORT)"
+    print_success "Fail2Ban: активен — защищает SSH от брутфорса"
 else
-    print_warning "⚠️ Fail2Ban: неактивен"
+    print_warning "Fail2Ban: неактивен"
 fi
 
 if ufw status | grep -qi "Status: active"; then
-    print_success "✅ UFW: активен (защита сети включена)"
+    print_success "UFW: активен — весь входящий трафик заблокирован, кроме SSH"
 else
-    print_warning "⚠️ UFW: неактивен (защита сети отключена!)"
+    print_error "UFW: НЕ АКТИВЕН — сервер НЕ защищён брандмауэром!"
 fi
 
-print_success "🎉 Оптимизация сервера завершена!"
+print_success "Оптимизация и защита сервера завершены!"
 
 print_warning ""
-print_warning "💡 Рекомендуется перезагрузить сервер для полного применения настроек:"
+print_warning "Рекомендуется перезагрузить сервер для полного применения настроек:"
 print_warning "   reboot"
