@@ -348,10 +348,23 @@ fi
 
 # Виртуальная память
 print_info "Статус виртуальной памяти:"
-SWAP_SIZE_BYTES=$(swapon --show --bytes | awk 'NR==2 {print $3}' 2>/dev/null)
-if [[ -n "$SWAP_SIZE_BYTES" ]] && [[ "$SWAP_SIZE_BYTES" -gt 0 ]]; then
-    SWAP_SIZE_GB=$((SWAP_SIZE_BYTES / 1024 / 1024 / 1024))
-    print_success "Swap-файл: ${SWAP_SIZE_GB} GB активен"
+
+if [ -f /swapfile ] && swapon --show | grep -q '/swapfile'; then
+    SWAP_BYTES=$(stat -c %s /swapfile 2>/dev/null || stat -f %z /swapfile 2>/dev/null)
+    if [ -n "$SWAP_BYTES" ] && [ "$SWAP_BYTES" -gt 0 ]; then
+        if [ "$SWAP_BYTES" -ge $((1024 * 1024 * 1024)) ]; then
+            SWAP_HUMAN="$((SWAP_BYTES / 1024 / 1024 / 1024)) GB"
+        elif [ "$SWAP_BYTES" -ge $((1024 * 1024)) ]; then
+            SWAP_HUMAN="$((SWAP_BYTES / 1024 / 1024)) MB"
+        else
+            SWAP_HUMAN="$((SWAP_BYTES / 1024)) KB"
+        fi
+        print_success "Swap-файл: $SWAP_HUMAN активен"
+    else
+        print_warning "Swap-файл существует, но имеет нулевой размер"
+    fi
+elif [ -f /swapfile ]; then
+    print_warning "Swap-файл существует, но не активен. Активируйте: swapon /swapfile"
 else
     print_warning "Виртуальная память не настроена!"
 fi
