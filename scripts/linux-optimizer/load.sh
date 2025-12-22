@@ -30,6 +30,18 @@ apply_sysctl_optimization() {
     sysctl -w "$key=$value" >/dev/null 2>&1 || true
 }
 
+# Проверка, остались ли пакеты для обновления после upgrade
+check_if_fully_updated() {
+    # Скрыто обновляем список пакетов
+    DEBIAN_FRONTEND=noninteractive apt-get update -qq >/dev/null 2>&1 || true
+    # Проверяем наличие обновлений без реальной установки
+    if apt-get --just-print upgrade 2>/dev/null | grep -q "^Inst"; then
+        echo "доступны обновления"
+    else
+        echo "актуальна"
+    fi
+}
+
 # =============== ОПРЕДЕЛЕНИЕ КОРНЕВОГО УСТРОЙСТВА ===============
 ROOT_DEVICE=$(df / --output=source | tail -1 | sed 's/\/dev\///' | sed 's/[0-9]*$//')
 
@@ -127,18 +139,6 @@ apt-get clean >/dev/null 2>&1 || true
 # Проверяем, всё ли обновлено
 SYSTEM_UPDATE_STATUS=$(check_if_fully_updated)
 print_success "Система обновлена: $SYSTEM_UPDATE_STATUS"
-
-# Функция: проверить, остались ли пакеты для обновления
-check_if_fully_updated() {
-    # Обновляем список пакетов (тихо)
-    DEBIAN_FRONTEND=noninteractive apt-get update -qq >/dev/null 2>&1 || true
-    # Проверяем, есть ли обновляемые пакеты
-    if apt-get --just-print upgrade | grep -q "^Inst"; then
-        echo "доступны обновления"
-    else
-        echo "актуальна"
-    fi
-}
 
 # =============== УСТАНОВКА ПАКЕТОВ ===============
 print_step "Установка пакетов"
@@ -315,7 +315,9 @@ print_success "Fail2Ban настроен: защищает SSH (порт $SSH_PO
 printf '\033c'
 
 print_step "ФИНАЛЬНАЯ СВОДКА"
-print_success "ОС: $PRETTY_NAME"
+
+print_success "ОС: $PRETTY_NAME ($SYSTEM_UPDATE_STATUS)"
+
 # Восстановительный аккаунт (только если существует)
 if [ -n "$RECOVERY_USER" ] && id "$RECOVERY_USER" >/dev/null 2>&1; then
     print_error "ВАЖНО: СОЗДАН АККАУНТ ДЛЯ ВОССТАНОВЛЕНИЯ!"
