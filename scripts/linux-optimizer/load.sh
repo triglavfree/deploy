@@ -147,25 +147,29 @@ else
     print_success "Все пакеты уже установлены"
 fi
 
-# =============== UFW: ТОЛЬКО SSH ===============
+# =============== UFW: ТОЛЬКО SSH С ВАШЕГО IP ===============
 print_step "Настройка брандмауэра UFW"
 
 ufw --force reset >/dev/null 2>&1 || true
 ufw default deny incoming
 ufw default allow outgoing
-ufw allow ssh  # Только порт 22
 
-# Дополнительное правило для вашего IP
+# Разрешаем SSH ТОЛЬКО с вашего IP (если он известен)
 if [ "$CURRENT_IP" != "unknown" ]; then
-    ufw allow from "$CURRENT_IP" to any port ssh
+    ufw allow from "$CURRENT_IP" to any port ssh comment "SSH с доверенного IP"
+    print_info "Разрешён SSH только с IP: $CURRENT_IP"
+else
+    # Если IP не определился — разрешаем глобально (аварийный режим)
+    ufw allow ssh comment "SSH (глобально, IP не определён)"
+    print_warning "Не удалось определить ваш IP — SSH разрешён для всех!"
 fi
 
-print_warning "UFW будет включён через 5 секунд (весь входящий трафик, кроме SSH, будет заблокирован)..."
+print_warning "UFW будет включён через 5 секунд (весь входящий трафик заблокирован, кроме SSH с вашего IP)..."
 sleep 5
 ufw --force enable >/dev/null 2>&1 || true
 
 if ufw status | grep -qi "Status: active"; then
-    print_success "UFW активирован: всё закрыто, кроме SSH"
+    print_success "UFW активирован: вход разрешён только для SSH с доверенного IP"
 else
     print_warning "UFW не активирован"
 fi
@@ -313,12 +317,14 @@ if [ -f "/sys/block/$ROOT_DEVICE/queue/scheduler" ]; then
 fi
 print_info "Планировщик диска: ${SCHEDULER_STATUS}"
 
-# === ЧТО МЫ СДЕЛАЛИ С БРАНДМАУЭРОМ ===
+# === БРАНДМАУЭР: ЧТО РАЗРЕШЕНО ===
 print_info "Брандмауэр UFW:"
-print_info "  → Все входящие подключения ЗАБЛОКИРОВАНЫ по умолчанию"
-print_info "  → Разрешён только входящий трафик на порт SSH ($SSH_PORT)"
+print_info "  → Все входящие подключения ЗАБЛОКИРОВАНЫ"
+
 if [ "$CURRENT_IP" != "unknown" ]; then
-    print_info "  → Дополнительно разрешён SSH с вашего IP: $CURRENT_IP"
+    print_info "  → Разрешён входящий трафик на порт: SSH ($SSH_PORT) только с вашего IP: $CURRENT_IP"
+else
+    print_info "  → Разрешён входящий трафик на порт: SSH ($SSH_PORT) для всех (IP не был определён при настройке)"
 fi
 
 # Виртуальная память
