@@ -67,43 +67,71 @@ print_step "Определение вашего IP-адреса"
 
 CLIENT_IP=""
 
-# Попытка 1: из SSH-переменных
-if [ -n "$SSH_CLIENT" ]; then
-    CLIENT_IP=$(echo "$SSH_CLIENT" | awk '{print $1}')
-elif [ -n "$SSH_CONNECTION" ]; then
-    CLIENT_IP=$(echo "$SSH_CONNECTION" | awk '{print $1}')
+# Попытка 1: напрямую из SSH_CLIENT (даже под sudo)
+if [ -n "${SSH_CLIENT}" ]; then
+    CLIENT_IP=$(echo "${SSH_CLIENT}" | awk '{print $1}')
 fi
 
-# Попытка 2: из последнего входа в auth.log (если SSH-переменные не сработали)
-if [ -z "$CLIENT_IP" ] || [ "$CLIENT_IP" = "127.0.0.1" ] || [[ "$CLIENT_IP" == ::* ]]; then
-    if command -v last &> /dev/null; then
-        CLIENT_IP=$(last -n 1 -i | awk 'NR==2 && $1 ~ /^[a-zA-Z]/ {print $3}' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | head -1)
-    fi
-fi
-
-# Запрос IP у пользователя, если не определился
-if [ -z "$CLIENT_IP" ] || ! validate_ip "$CLIENT_IP"; then
-    print_info "Не удалось автоматически определить ваш публичный IP-адрес."
-    print_info "Это нормально, если вы используете веб-консоль или подключаетесь через прокси."
-    echo
-    read -rp "${BLUE}Введите ваш публичный IP-адрес (оставьте пустым для разрешения SSH всем): ${NC}" USER_IP
-    
-    if [ -n "$USER_IP" ] && validate_ip "$USER_IP"; then
-        CLIENT_IP="$USER_IP"
-        print_success "IP $CLIENT_IP принят."
-    else
-        if [ -n "$USER_IP" ]; then
-            print_warning "IP '$USER_IP' некорректен или приватный. Будет разрешён SSH для всех!"
-        else
-            print_warning "IP не указан. Будет разрешён SSH для всех (небезопасно)!"
+# Попытка 2: из /proc/net/tcp (надёжный способ для активного SSH)
+if [ -z "$CLIENT_IP" ]; then
+    # Ищем подключение к порту 22
+    SSH_PORT_HEX=$(printf "%04X" 22)
+    CLIENT_IP_HEX=$(ss -tnp | grep "::$SSH_PORT_HEX" | head -1 | awk '{print $4}' | cut -d: -f1)
+    if [ -n "$CLIENT_IP_HEX" ]; then
+        # Конвертируем HEX в IP (для IPv4)
+        if [[ "$CLIENT_IP_HEX" =~ ^[0-9A-F]{8}$ ]]; then
+            a=$((0x${CLIENT_IP_HEX:6:2}))
+            b=$((0x${CLIENT_IP_HEX:4:2}))
+            c=$((0x${CLIENT_IP_HEX:2:2}))
+            d=$((0x${CLIENT_IP_HEX:0:2}))
+            CLIENT_IP="$a.$b.$c.$d"
         fi
-        CLIENT_IP=""
     fi
-else
-    print_success "Ваш IP определён автоматически: $CLIENT_IP"
 fi
 
-CURRENT_IP="$CLIENT_IP"
+# Попытка 3: из auth.log (последний успешный вход)
+if [ -z "$CLIENT_IP" ] && [ -f /var/log/auth.log ]; then
+    CLIENT_IP=$(grep 'Accepted publickey' /var/log/auth.log | tail -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+fi
+
+# Валидация IP
+is_valid_public_ip() {
+    local ip=$1
+    if [[ $ip =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+        IFS='.' read -r a b c d <<< "$ip"
+        if [ "$a" -ge 1 ] && [ "$a" -le 254 ] && \
+           [ "$b" -ge 0 ] && [ "$b" -le 255 ] && \
+           [ "$c" -ge 0 ] && [ "$c" -le 255 ] && \
+           [ "$d" -ge 1 ] && [ "$d" -le 254 ]; then
+            # Исключаем приватные диапазоны
+            if ! [[ $ip =~ ^(127\.|10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.) ]]; then
+                return 0
+            fi
+        fi
+    fi
+    return 1
+}
+
+# Принимаем IP, только если он валиден
+if [ -n "$CLIENT_IP" ] && is_valid_public_ip "$CLIENT_IP"; then
+    print_success "Ваш IP определён автоматически: $CLIENT_IP"
+    CURRENT_IP="$CLIENT_IP"
+else
+    print_info "Не удалось надёжно определить ваш публичный IP."
+    read -rp "${BLUE}Введите ваш IP вручную (оставьте пустым для разрешения SSH всем): ${NC}" MANUAL_IP
+    
+    if [ -n "$MANUAL_IP" ] && is_valid_public_ip "$MANUAL_IP"; then
+        CURRENT_IP="$MANUAL_IP"
+        print_success "IP $CURRENT_IP принят."
+    else
+        if [ -n "$MANUAL_IP" ]; then
+            print_warning "IP '$MANUAL_IP' некорректен. SSH будет разрешён для всех!"
+        else
+            print_warning "IP не указан. SSH будет разрешён для всех (небезопасно)!"
+        fi
+        CURRENT_IP=""
+    fi
+fi
 
 # =============== ПРОВЕРКА SSH ДОСТУПА ===============
 check_ssh_access_safety() {
