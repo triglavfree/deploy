@@ -202,19 +202,38 @@ done
 sysctl -p >/dev/null 2>&1 || true
 print_success "Оптимизации ядра применены"
 
-# =============== SWAP ===============
+# =============== SWAP: УМНАЯ НАСТРОЙКА ПОД ОБЪЁМ RAM ===============
 print_step "Настройка swap-файла"
 
-if ! swapon --show | grep -q '/swapfile'; then
-    SWAP_SIZE_GB=2
-    fallocate -l ${SWAP_SIZE_GB}G /swapfile || dd if=/dev/zero of=/swapfile bs=1M count=$((SWAP_SIZE_GB * 1024))
+# Проверяем, есть ли уже swap
+if swapon --show | grep -q '/swapfile'; then
+    print_warning "Swap уже активен"
+else
+    # Определяем размер swap в зависимости от RAM
+    if [ "$TOTAL_MEM_MB" -le 1024 ]; then
+        SWAP_SIZE_MB=2048    # 2 ГБ для ≤1 ГБ RAM
+    elif [ "$TOTAL_MEM_MB" -le 2048 ]; then
+        SWAP_SIZE_MB=1024    # 1 ГБ для 2 ГБ RAM
+    elif [ "$TOTAL_MEM_MB" -le 4096 ]; then
+        SWAP_SIZE_MB=512     # 512 МБ для 4 ГБ RAM
+    else
+        SWAP_SIZE_MB=512     # 512 МБ для ≥8 ГБ RAM
+    fi
+
+    print_info "Создание swap-файла: ${SWAP_SIZE_MB} МБ (RAM: ${TOTAL_MEM_MB} МБ)"
+
+    # Создаём swap-файл
+    if fallocate -l ${SWAP_SIZE_MB}M /swapfile >/dev/null 2>&1; then
+        :
+    else
+        dd if=/dev/zero of=/swapfile bs=1M count=$SWAP_SIZE_MB status=none
+    fi
+
     chmod 600 /swapfile
     mkswap /swapfile >/dev/null
     swapon /swapfile
     echo '/swapfile none swap sw 0 0' >> /etc/fstab
-    print_success "Swap ${SWAP_SIZE_GB}GB создан"
-else
-    print_warning "Swap уже активен"
+    print_success "Swap ${SWAP_SIZE_MB} МБ успешно создан"
 fi
 
 # =============== SSH ===============
