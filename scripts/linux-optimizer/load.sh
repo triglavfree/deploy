@@ -65,28 +65,46 @@ print_success "Резервные копии: $BACKUP_DIR"
 # =============== ОПРЕДЕЛЕНИЕ IP КЛИЕНТА ===============
 print_step "Определение вашего IP-адреса"
 
-CLIENT_IP=""
 CURRENT_IP=""
 
-# Пытаемся получить IP из SSH-сессии
-if [ -n "$SSH_CLIENT" ]; then
-    # Берем ПЕРВОЕ слово из SSH_CLIENT
-    CLIENT_IP=$(echo "$SSH_CLIENT" | awk '{print $1}' | tr -d '\r\n')
+# Способ 1: Используем SSH_CONNECTION (самый простой и надежный)
+if [ -n "$SSH_CONNECTION" ]; then
+    CURRENT_IP=$(echo "$SSH_CONNECTION" | awk '{print $1}')
+    print_success "Ваш IP взят из SSH_CONNECTION: $CURRENT_IP"
 fi
 
-# Проверяем: не пустой ли результат?
-if [ -z "$CLIENT_IP" ]; then
-    print_info "Переменная SSH_CLIENT пуста или не содержит данных."
-else
-    # Убираем возможные служебные символы
-    CLIENT_IP=$(echo "$CLIENT_IP" | sed 's/[^0-9a-fA-F.:]//g')
+# Способ 2: Если не сработало - используем ss (показал 212.74.198.14)
+if [ -z "$CURRENT_IP" ]; then
+    CURRENT_IP=$(ss -tnp 2>/dev/null | grep 'ESTAB.*sshd' | awk '{print $5}' | cut -d: -f1 | head -1)
+    if [ -n "$CURRENT_IP" ]; then
+        print_success "Ваш IP взят из активных соединений: $CURRENT_IP"
+    fi
+fi
+
+# Способ 3: Если все еще пусто - используем who (тоже работает)
+if [ -z "$CURRENT_IP" ]; then
+    CURRENT_IP=$(who -u 2>/dev/null | grep -Eo '\([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+\)' | tr -d '()' | head -1)
+    if [ -n "$CURRENT_IP" ]; then
+        print_success "Ваш IP взят из who: $CURRENT_IP"
+    fi
+fi
+
+# Валидация: проверяем, что это действительно IP
+if [ -z "$CURRENT_IP" ] || ! [[ "$CURRENT_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    CURRENT_IP=""
+    print_info "Не удалось определить ваш IP автоматически."
+    read -rp "${BLUE}Введите ваш публичный IP-адрес (Enter для разрешения SSH всем): ${NC}" MANUAL_IP
     
-    # Проверяем, что это похоже на IP (содержит точки и цифры)
-    if [[ "$CLIENT_IP" == *.*.*.* ]] && [[ "$CLIENT_IP" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]]; then
-        CURRENT_IP="$CLIENT_IP"
-        print_success "Ваш IP определён автоматически: $CURRENT_IP"
+    MANUAL_IP=$(echo "$MANUAL_IP" | tr -d '[:space:]')
+    
+    if [ -n "$MANUAL_IP" ] && [[ "$MANUAL_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        CURRENT_IP="$MANUAL_IP"
+        print_success "IP $CURRENT_IP принят."
     else
-        print_info "Получено некорректное значение вместо IP: '$CLIENT_IP'"
+        if [ -n "$MANUAL_IP" ]; then
+            print_warning "Введённое значение '$MANUAL_IP' не похоже на IP-адрес."
+        fi
+        print_warning "SSH будет разрешён для всех (небезопасно, но допустимо временно)."
     fi
 fi
 
