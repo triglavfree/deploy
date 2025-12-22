@@ -67,47 +67,30 @@ print_step "Определение вашего IP-адреса"
 
 CLIENT_IP=""
 if [ -n "$SSH_CLIENT" ]; then
-    CLIENT_IP=$(echo "$SSH_CLIENT" | awk '{print $1}')
+    # Берем ПЕРВОЕ слово из SSH_CLIENT - это всегда IP клиента
+    CLIENT_IP=$(echo "$SSH_CLIENT" | cut -d' ' -f1)
 fi
 
-# Простая проверка: это похоже на IPv4?
-if [[ "$CLIENT_IP" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
-    # Базовая проверка диапазонов (0-255)
-    IFS='.' read -r a b c d <<< "$CLIENT_IP"
-    if [ "$a" -le 255 ] && [ "$b" -le 255 ] && [ "$c" -le 255 ] && [ "$d" -le 255 ] && [ "$a" -gt 0 ]; then
-        # Исключаем очевидно локальные адреса
-        if ! [[ "$CLIENT_IP" =~ ^(127\.|10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.) ]]; then
-            CURRENT_IP="$CLIENT_IP"
-            print_success "Ваш IP определён автоматически: $CURRENT_IP"
-        else
-            CLIENT_IP=""
-        fi
-    fi
-fi
-
-if [ -z "$CURRENT_IP" ]; then
+# Проверяем, что это похоже на IP-адрес (содержит точки и цифры)
+if [ -n "$CLIENT_IP" ] && [[ "$CLIENT_IP" == *.*.*.* ]] && [[ "$CLIENT_IP" =~ [0-9]+\.[0-9]+\.[0-9]+\.[0-9]+ ]]; then
+    CURRENT_IP="$CLIENT_IP"
+    print_success "Ваш IP определён автоматически: $CURRENT_IP"
+else
     CURRENT_IP=""
     print_info "Автоматическое определение не сработало."
     read -rp "${BLUE}Введите ваш публичный IP для доступа по SSH (Enter — разрешить всем): ${NC}" MANUAL_IP
     
-    if [[ "$MANUAL_IP" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
-        IFS='.' read -r a b c d <<< "$MANUAL_IP"
-        if [ "$a" -le 255 ] && [ "$b" -le 255 ] && [ "$c" -le 255 ] && [ "$d" -le 255 ] && [ "$a" -gt 0 ]; then
-            if ! [[ "$MANUAL_IP" =~ ^(127\.|10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.) ]]; then
-                CURRENT_IP="$MANUAL_IP"
-                print_success "IP $CURRENT_IP принят."
-            fi
-        fi
-    fi
-    
-    if [ -z "$CURRENT_IP" ]; then
+    # Простая проверка: если введено что-то похожее на IP
+    if [ -n "$MANUAL_IP" ] && [[ "$MANUAL_IP" == *.*.*.* ]] && [[ "$MANUAL_IP" =~ [0-9]+\.[0-9]+\.[0-9]+\.[0-9]+ ]]; then
+        CURRENT_IP="$MANUAL_IP"
+        print_success "IP $CURRENT_IP принят."
+    else
         if [ -n "$MANUAL_IP" ]; then
-            print_warning "IP '$MANUAL_IP' выглядит некорректно."
+            print_warning "IP '$MANUAL_IP' не распознан как корректный."
         fi
         print_warning "SSH будет разрешён для всех (небезопасно, но допустимо временно)."
     fi
 fi
-
 # =============== ПРОВЕРКА SSH ДОСТУПА ===============
 check_ssh_access_safety() {
     print_step "Проверка безопасности SSH доступа"
