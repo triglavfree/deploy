@@ -302,7 +302,7 @@ print_success "Fail2Ban настроен: защищает SSH (порт $SSH_PO
 printf '\033c'
 
 print_step "ФИНАЛЬНАЯ СВОДКА"
-
+print_success "ОС: $PRETTY_NAME"
 # Восстановительный аккаунт (только если существует)
 if [ -n "$RECOVERY_USER" ] && id "$RECOVERY_USER" >/dev/null 2>&1; then
     print_error "ВАЖНО: СОЗДАН АККАУНТ ДЛЯ ВОССТАНОВЛЕНИЯ!"
