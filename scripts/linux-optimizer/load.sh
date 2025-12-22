@@ -62,8 +62,30 @@ cp /etc/sysctl.conf "$BACKUP_DIR/" 2>/dev/null || true
 cp /etc/fstab "$BACKUP_DIR/" 2>/dev/null || true
 print_success "Резервные копии: $BACKUP_DIR"
 
-# Получаем текущий IP один раз для всего скрипта
-CURRENT_IP=$(curl -s4 https://api.ipify.org 2>/dev/null || echo "unknown")
+# =============== ОПРЕДЕЛЕНИЕ IP КЛИЕНТА ===============
+print_step "Определение вашего IP-адреса"
+
+# Сначала попробуем получить IP из SSH-сессии (если возможно)
+CLIENT_IP=""
+if [ -n "$SSH_CLIENT" ]; then
+    CLIENT_IP=$(echo "$SSH_CLIENT" | awk '{print $1}')
+elif [ -n "$SSH_CONNECTION" ]; then
+    CLIENT_IP=$(echo "$SSH_CONNECTION" | awk '{print $1}')
+fi
+
+# Если не удалось — спрашиваем вручную
+if [ -z "$CLIENT_IP" ] || [ "$CLIENT_IP" = "127.0.0.1" ] || [[ "$CLIENT_IP" == ::* ]]; then
+    print_info "Не удалось автоматически определить ваш IP-адрес."
+    read -rp "${BLUE}Введите ваш публичный IP-адрес (для разрешения SSH): ${NC}" CLIENT_IP
+    
+    # Простая валидация IP
+    if ! [[ "$CLIENT_IP" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+        print_warning "Некорректный формат IP. Разрешим SSH для всех (небезопасно)!"
+        CLIENT_IP=""
+    fi
+fi
+
+CURRENT_IP="$CLIENT_IP"
 
 # =============== ПРОВЕРКА SSH ДОСТУПА ===============
 check_ssh_access_safety() {
@@ -169,20 +191,25 @@ ufw --force reset >/dev/null 2>&1 || true
 ufw default deny incoming
 ufw default allow outgoing
 
-# Разрешаем SSH ТОЛЬКО с вашего IP (если он известен)
-if [ "$CURRENT_IP" != "unknown" ]; then
+if [ -n "$CURRENT_IP" ]; then
     ufw allow from "$CURRENT_IP" to any port ssh comment "SSH с доверенного IP"
     print_info "Разрешён SSH только с IP: $CURRENT_IP"
 else
-    # Если IP не определился — разрешаем глобально (аварийный режим)
-    ufw allow ssh comment "SSH (глобально, IP не определён)"
-    print_warning "Не удалось определить ваш IP — SSH разрешён для всех!"
+    # Аварийный режим: разрешаем всем (опасно!)
+    ufw allow ssh comment "SSH (глобально, IP не указан)"
+    print_warning "SSH разрешён для ВСЕХ — это небезопасно!"
 fi
 
+print_warning "UFW будет включён через 5 секунд..."
+sleep 5
 ufw --force enable >/dev/null 2>&1 || true
 
 if ufw status | grep -qi "Status: active"; then
-    print_success "UFW активирован: вход разрешён только для SSH с доверенного IP"
+    if [ -n "$CURRENT_IP" ]; then
+        print_success "UFW активирован: SSH разрешён только с $CURRENT_IP"
+    else
+        print_success "UFW активирован: SSH разрешён для всех (небезопасно!)"
+    fi
 else
     print_warning "UFW не активирован"
 fi
@@ -357,10 +384,10 @@ print_success "BBR: ${BBR_STATUS}"
 print_info "Брандмауэр UFW:"
 print_info "  → Все входящие подключения ЗАБЛОКИРОВАНЫ"
 
-if [ "$CURRENT_IP" != "unknown" ]; then
+if [ -n "$CURRENT_IP" ]; then
     print_info "  → Разрешён входящий трафик на порт: SSH ($SSH_PORT) только с вашего IP: $CURRENT_IP"
 else
-    print_info "  → Разрешён входящий трафик на порт: SSH ($SSH_PORT) для всех (IP не был определён при настройке)"
+    print_info "  → Разрешён входящий трафик на порт: SSH ($SSH_PORT) для всех (небезопасно!)"
 fi
 
 # Виртуальная память
