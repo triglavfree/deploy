@@ -164,8 +164,6 @@ else
     print_warning "Не удалось определить ваш IP — SSH разрешён для всех!"
 fi
 
-print_warning "UFW будет включён через 5 секунд (весь входящий трафик заблокирован, кроме SSH с вашего IP)..."
-sleep 5
 ufw --force enable >/dev/null 2>&1 || true
 
 if ufw status | grep -qi "Status: active"; then
