@@ -70,37 +70,7 @@ CURRENT_IP=""
 # Способ 1: Проверяем последние успешные входы в auth.log
 if [ -f /var/log/auth.log ]; then
     CURRENT_IP=$(grep 'sshd.*Accepted' /var/log/auth.log 2>/dev/null | tail -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | head -1)
-fi
-
-# Способ 2: Используем last (последние входы)
-if [ -z "$CURRENT_IP" ] && command -v last &> /dev/null; then
-    CURRENT_IP=$(last -n 5 -i 2>/dev/null | grep -E '([0-9]{1,3}\.){3}[0-9]{1,3}' | awk '{print $3}' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | head -1)
-fi
-
-# Способ 3: Самый надежный для sudo-сессий - ручной ввод с инструкцией
-if [ -z "$CURRENT_IP" ] || ! [[ "$CURRENT_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-    echo ""
-    print_warning "ВАЖНО: Скрипт запущен через sudo, автоматическое определение IP невозможно"
-    echo ""
-    print_info "Как узнать ваш IP:"
-    print_info "1. Откройте НОВОЕ окно терминала на вашем КОМПЬЮТЕРЕ (не на сервере!)"
-    print_info "2. Выполните одну из команд:"
-    print_info "   curl ifconfig.me"
-    print_info "   curl ipinfo.io/ip"
-    print_info "   curl icanhazip.com"
-    echo ""
-    print_info "3. Скопируйте полученный IP и введите ниже"
-    echo ""
-    read -rp "${BLUE}Введите ваш публичный IP-адрес для доступа по SSH: ${NC}" MANUAL_IP
-    
-    # Очистка и валидация
-    MANUAL_IP=$(echo "$MANUAL_IP" | tr -d '[:space:]')
-    if [ -n "$MANUAL_IP" ] && [[ "$MANUAL_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-        CURRENT_IP="$MANUAL_IP"
-        print_success "IP $CURRENT_IP принят."
-    else
-        print_error "Ошибка: введён некорректный IP-адрес. Пожалуйста, перезапустите скрипт с правильным IP."
-    fi
+    print_success "IP $CURRENT_IP принят."
 fi
 
 # =============== ПРОВЕРКА SSH ДОСТУПА ===============
