@@ -1,6 +1,6 @@
 [![wg-easy](https://img.shields.io/badge/wg--easy-v15.1.0-f8f9fa?logo=wireguard&logoColor=e74c3c&labelColor=white&style=for-the-badge)](https://github.com/wg-easy/wg-easy)
-[![Qwen Code](https://img.shields.io/badge/Qwen_Code-1.0-f8f9fa?logo=github-copilot&logoColor=007ACC&labelColor=white&style=for-the-badge)](https://github.com/QwenLM/qwen-code)
-[![Blitz Panel](https://img.shields.io/badge/Blitz_Panel-Hysteria2-f8f9fa?logo=proxy&logoColor=4A6CF7&labelColor=white&style=for-the-badge)](https://github.com/ReturnFI/Blitz)
+[![Qwen Code](https://img.shields.io/badge/Qwen_Code-v0.5.2-f8f9fa?logo=github-copilot&logoColor=007ACC&labelColor=white&style=for-the-badge)](https://github.com/QwenLM/qwen-code)
+[![Blitz Panel](https://img.shields.io/badge/Blitz_Panel-2.5.0-f8f9fa?logo=proxy&logoColor=4A6CF7&labelColor=white&style=for-the-badge)](https://github.com/ReturnFI/Blitz)
 
 ### 🪬 Оптимизатор VPS Ubuntu 22
 ```bash
