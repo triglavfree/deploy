@@ -2,7 +2,7 @@
 
 ### 🪬 Оптимизатор VPS Ubuntu 22
 ```bash
-curl -fsSL https://raw.githubusercontent.com/triglavfree/deploy/main/scripts/linux-optimizer/load.sh | sudo -E bash
+curl -fsSL https://raw.githubusercontent.com/triglavfree/deploy/main/scripts/vps/run.sh | sudo -E bash
 ```
 ---
 ### 🫟 QWEN-CODE
