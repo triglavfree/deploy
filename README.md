@@ -15,4 +15,10 @@ curl -qL https://www.npmjs.com/install.sh | sh
 ```bash
 npm install -g @qwen-code/qwen-code@latest
 ```
+
+###⚡️Bliz - Hysteria2
+
+```bash
+bash <(curl https://raw.githubusercontent.com/ReturnFI/Blitz/main/install.sh)
+```
 ---
