@@ -1,7 +1,7 @@
-[![wg-easy](https://img.shields.io/badge/wg--easy-v15.1.0-333333?logo=wireguard&logoColor=e74c3c&labelColor=white&style=for-the-badge)](https://github.com/wg-easy/wg-easy)
-[![Qwen Code](https://img.shields.io/badge/Qwen_Code-v0.5.2-333333?logo=github-copilot&logoColor=007ACC&labelColor=white&style=for-the-badge)](https://github.com/QwenLM/qwen-code)
-[![Blitz Panel](https://img.shields.io/badge/Blitz_Panel-2.5.0-333333?logo=bolt&logoColor=FFD700&labelColor=white&style=for-the-badge)](https://github.com/ReturnFI/Blitz)
-[![Ubuntu](https://img.shields.io/badge/Ubuntu-24.04_LTS-333333?logo=ubuntu&logoColor=E95420&labelColor=white&style=for-the-badge)](https://releases.ubuntu.com/24.04/)
+[![wg-easy](https://img.shields.io/badge/wg--easy-v15.1.0-f8f9fa?logo=wireguard&logoColor=e74c3c&labelColor=white&style=for-the-badge)](https://github.com/wg-easy/wg-easy)
+[![Qwen Code](https://img.shields.io/badge/Qwen_Code-v0.5.2-f8f9fa?logo=github-copilot&logoColor=007ACC&labelColor=white&style=for-the-badge)](https://github.com/QwenLM/qwen-code)
+[![Blitz Panel](https://img.shields.io/badge/Blitz_Panel-2.5.0-f8f9fa?label=⚡%20Blitz%20Panel&labelColor=white&style=for-the-badge)](https://github.com/ReturnFI/Blitz)
+[![Ubuntu](https://img.shields.io/badge/Ubuntu-24.04_LTS-f8f9fa?logo=ubuntu&logoColor=E95420&labelColor=white&style=for-the-badge)](https://releases.ubuntu.com/24.04/)
 
 ### Оптимизатор VPS Ubuntu 22
 ```bash
