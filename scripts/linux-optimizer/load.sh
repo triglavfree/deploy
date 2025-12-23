@@ -342,7 +342,7 @@ fi
 
 # =============== ОЧИСТКА ВРЕМЕННЫХ ФАЙЛОВ ===============
 if [ -d "$BACKUP_DIR" ]; then
-    rm -rf "$BACKUP_DIR" 2>/dev/null
-    print_info "Резервные копии удалены."
+    rm -rf /root/backup_2025* 2>/dev/null || true
+    print_info "Все резервные копии скрипта удалены."
 fi
 
