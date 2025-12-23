@@ -332,6 +332,10 @@ else
     print_error "UFW: НЕ АКТИВЕН"
 fi
 
+# Очистка резервных копий
+rm -rf /root/backup_2025* 2>/dev/null || true
+print_info "Резервные копии скрипта удалены."
+
 # Перезагрузка?
 if [ -f /var/run/reboot-required ]; then
     print_warning "Установлены обновления, требующие перезагрузки"
@@ -339,5 +343,3 @@ if [ -f /var/run/reboot-required ]; then
 else
     print_success "Оптимизация и защита сервера завершены!"
 fi
-
-rm -rf /root/backup_2025* 2>/dev/null || true
