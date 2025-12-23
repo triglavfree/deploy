@@ -194,31 +194,32 @@ fi
 # =============== UFW: ТОЛЬКО SSH С ВАШЕГО IP ===============
 print_step "Настройка брандмауэра UFW"
 
+# Сбросим текущие правила (тихо)
 ufw --force reset >/dev/null 2>&1 || true
-ufw default deny incoming
-ufw default allow outgoing
 
+# Базовая политика
+ufw default deny incoming >/dev/null 2>&1
+ufw default allow outgoing >/dev/null 2>&1
+
+# Разрешаем SSH
 if [ -n "$CURRENT_IP" ]; then
-    ufw allow from "$CURRENT_IP" to any port ssh comment "SSH с доверенного IP"
-    print_info "Разрешён SSH только с IP: $CURRENT_IP"
+    ufw allow from "$CURRENT_IP" to any port ssh comment "SSH с доверенного IP" >/dev/null 2>&1
 else
-    # Аварийный режим: разрешаем всем (опасно!)
-    ufw allow ssh comment "SSH (глобально, IP не указан)"
-    print_warning "SSH разрешён для ВСЕХ — это небезопасно!"
+    ufw allow ssh comment "SSH (глобально, IP не определён)" >/dev/null 2>&1
 fi
 
-print_warning "UFW будет включён через 5 секунд..."
-sleep 5
-ufw --force enable >/dev/null 2>&1 || true
+# Активируем UFW
+ufw --force enable >/dev/null 2>&1
 
+# Проверяем статус
 if ufw status | grep -qi "Status: active"; then
     if [ -n "$CURRENT_IP" ]; then
-        print_success "UFW активирован: SSH разрешён только с $CURRENT_IP"
+        print_success "Правила UFW применены: SSH разрешён только с $CURRENT_IP"
     else
-        print_success "UFW активирован: SSH разрешён для всех (небезопасно!)"
+        print_warning "Правила UFW применены: SSH разрешён для всех (IP не определён)"
     fi
 else
-    print_warning "UFW не активирован"
+    print_error "UFW не активирован — проверьте вручную"
 fi
 
 # =============== ОПТИМИЗАЦИЯ ЯДРА ===============
