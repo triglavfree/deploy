@@ -1,4 +1,4 @@
-# DEPLOY
+
 
 ### ☯️ Оптимизатор VPS Ubuntu 22
 ```bash
