@@ -388,6 +388,12 @@ print_success "TRIM для SSD: $TRIM_STATUS"
 BBR_STATUS=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo "неизвестно")
 print_success "BBR: ${BBR_STATUS}"
 
+# === Внешний IP ===
+if [ -z "$SSH_CLIENT" ]; then
+    EXTERNAL_IP=$(curl -s https://api.ipify.org 2>/dev/null || echo "неизвестен")
+    print_info "Внешний IP сервера: $EXTERNAL_IP"
+fi
+
 # === БРАНДМАУЭР: ЧТО РАЗРЕШЕНО ===
 print_info "Брандмауэр UFW:"
 print_info "  → Все входящие подключения ЗАБЛОКИРОВАНЫ"
