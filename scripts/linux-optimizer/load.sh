@@ -290,7 +290,7 @@ if [ -z "$SSH_CLIENT" ]; then
 fi
 
 print_info "Брандмауэр UFW:"
-print_warning "  → Все входящие подключения ЗАБЛОКИРОВАНЫ"
+print_info "  → Все входящие подключения ЗАБЛОКИРОВАНЫ"
 if [ -n "$CURRENT_IP" ]; then
     print_info "  → SSH ($SSH_PORT) разрешён только с: $CURRENT_IP"
 else
