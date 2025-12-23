@@ -339,3 +339,9 @@ if [ -f /var/run/reboot-required ]; then
 else
     print_success "Оптимизация и защита сервера завершены!"
 fi
+
+# =============== ОЧИСТКА ВРЕМЕННЫХ ФАЙЛОВ ===============
+if [ -d "$BACKUP_DIR" ]; then
+    rm -rf "$BACKUP_DIR"
+    print_info "Временные резервные копии удалены: $BACKUP_DIR"
+fi
