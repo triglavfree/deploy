@@ -1,6 +1,6 @@
 # DEPLOY
 
-### 🚀 Оптимизатор VPS
+### 🚀 Оптимизатор VPS Ubuntu 24.04
 ```bash
 curl -fsSL https://raw.githubusercontent.com/triglavfree/deploy/main/scripts/linux-optimizer/load.sh | sudo -E bash
 ```
