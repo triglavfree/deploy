@@ -4,6 +4,7 @@ set -e
 # =============== ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ===============
 RECOVERY_USER=""
 RECOVERY_FILE="/root/recovery_info.txt"
+SERVER_IP=$(curl -s https://api.ipify.org 2>/dev/null || hostname -I | awk '{print $1}')
 CURRENT_IP="unknown"
 
 # =============== ЦВЕТА ===============
@@ -198,7 +199,8 @@ check_ssh_access_safety() {
         print_info "     ssh-copy-id root@${CURRENT_IP}"
     else
         print_info "     # Узнайте IP сервера и выполните:"
-        print_info "     ssh-copy-id root@ВАШ_IP"
+        print_info "     ssh-copy-id root@${SERVER_IP}"
+
     fi
     echo
     print_info "4. Или вручную: добавьте содержимое .pub в /root/.ssh/authorized_keys"
