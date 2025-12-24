@@ -22,14 +22,6 @@ print_warning(){ echo -e "${YELLOW}⚠ $1${NC}"; }
 print_error()  { echo -e "${RED}✗ $1${NC}" >&2; }
 print_info()   { echo -e "${BLUE}ℹ $1${NC}"; }
 
-apply_sysctl_optimization() {
-    local key="$1"
-    local value="$2"
-    sed -i "/^[[:space:]]*$key[[:space:]]*=/d" /etc/sysctl.conf 2>/dev/null
-    echo "$key=$value" >> /etc/sysctl.conf
-    sysctl -w "$key=$value" >/dev/null 2>&1 || true
-}
-
 # Проверка, остались ли пакеты для обновления после upgrade
 check_if_fully_updated() {
     DEBIAN_FRONTEND=noninteractive apt-get update -qq >/dev/null 2>&1 || true
@@ -37,6 +29,85 @@ check_if_fully_updated() {
         echo "доступны обновления"
     else
         echo "актуальна"
+    fi
+}
+
+# Проверка и применение оптимизаций ядра только один раз
+apply_max_performance_optimizations() {
+    local config_file="/etc/sysctl.d/99-max-performance.conf"
+    local needs_update=false
+    
+    # Проверяем, существует ли файл и содержит ли он наши параметры
+    if [ ! -f "$config_file" ]; then
+        needs_update=true
+    else
+        # Проверяем наличие ключевых параметров
+        if ! grep -q "net.ipv4.tcp_congestion_control = bbr" "$config_file" || \
+           ! grep -q "vm.swappiness = 30" "$config_file"; then
+            needs_update=true
+        fi
+    fi
+    
+    if [ "$needs_update" = true ]; then
+        print_info "Применение максимальных оптимизаций ядра..."
+        mkdir -p /etc/sysctl.d
+        
+        cat > "$config_file" << 'EOF'
+# BBR congestion control
+net.core.default_qdisc = fq            # Контроллер очереди для BBR
+net.ipv4.tcp_congestion_control = bbr  # Современный алгоритм контроля перегрузки
+net.ipv4.tcp_fastopen = 3              # Ускорение установки соединений
+
+# Сетевые буферы
+net.core.rmem_max = 67108864           # Макс. размер буфера приема (64MB)
+net.core.wmem_max = 67108864           # Макс. размер буфера передачи (64MB)
+net.core.rmem_default = 131072         # Стандартный размер буфера приема
+net.core.wmem_default = 131072         # Стандартный размер буфера передачи
+net.ipv4.tcp_rmem = 4096 87380 67108864 # Динамические буферы приема TCP
+net.ipv4.tcp_wmem = 4096 65536 67108864 # Динамические буферы передачи TCP
+net.ipv4.tcp_mem = 786432 1048576 1572864 # Память для TCP соединений
+
+# Лимиты подключений
+net.core.somaxconn = 65535             # Макс. длина очереди accept() (65K)
+net.core.netdev_max_backlog = 65536    # Макс. очередь для сетевых устройств
+net.ipv4.tcp_max_syn_backlog = 65536   # Макс. очередь SYN-запросов
+net.ipv4.tcp_max_tw_buckets = 1440000  # Макс. TIME-WAIT бакетов
+
+# Оптимизация TCP
+net.ipv4.tcp_slow_start_after_idle = 0 # Отключить медленный старт после простоя
+net.ipv4.tcp_synack_retries = 2        # Повторы SYN-ACK (быстрый отказ)
+net.ipv4.tcp_syn_retries = 3           # Повторы SYN (быстрый отказ)
+net.ipv4.tcp_retries2 = 8              # Повторы для установившихся соединений
+net.ipv4.tcp_tw_reuse = 1              # Reuse TIME-WAIT сокетов
+net.ipv4.tcp_fin_timeout = 30          # Таймаут FIN пакетов
+
+# Keepalive настройки
+net.ipv4.tcp_keepalive_time = 300      # Интервал проверки живости (5 мин)
+net.ipv4.tcp_keepalive_probes = 5      # Количество проверок перед разрывом
+net.ipv4.tcp_keepalive_intvl = 15      # Интервал между проверками (15 сек)
+
+# Безопасность и стабильность
+net.ipv4.tcp_syncookies = 1            # Защита от SYN-флуд атак
+net.ipv4.ip_forward = 1                # Важно для роутеров/шлюзов
+
+# VM параметры оптимизации памяти
+vm.swappiness = 30                     # Контроль использования swap
+vm.vfs_cache_pressure = 100            # Баланс кэширования
+vm.dirty_background_ratio = 5         # Начинать фоновую запись при 5% dirty
+vm.dirty_ratio = 15                    # Макс. dirty pages перед блокировкой
+vm.overcommit_memory = 1               # Агрессивный overcommit памяти
+
+# Дополнительные оптимизации
+fs.file-max = 2097152                  # Макс. количество файловых дескрипторов
+fs.inotify.max_user_watches = 524288   # Макс. наблюдений за файлами
+fs.inotify.max_user_instances = 512    # Макс. экземпляров inotify
+EOF
+
+        # Применяем настройки
+        sysctl -p "$config_file" >/dev/null 2>&1 || true
+        print_success "Максимальные оптимизации ядра применены"
+    else
+        print_info "Максимальные оптимизации ядра уже настроены"
     fi
 }
 
@@ -181,32 +252,13 @@ if ! ufw status | grep -qi "Status: active"; then
     print_error "UFW не активирован"
 fi
 
-# =============== ОПТИМИЗАЦИЯ ЯДРА ===============
-print_step "Оптимизация ядра"
+# =============== ОПТИМИЗАЦИЯ ЯДРА (МАКСИМАЛЬНАЯ ПРОИЗВОДИТЕЛЬНОСТЬ) ===============
+print_step "Оптимизация ядра для МАКСИМАЛЬНОЙ производительности"
 TOTAL_MEM_MB=$(free -m | awk '/^Mem:/{print $2}')
 print_info "Обнаружено RAM: ${TOTAL_MEM_MB} MB"
 
-declare -A KERNEL_OPTS
-KERNEL_OPTS=(
-    ["net.core.default_qdisc"]="fq"
-    ["net.ipv4.tcp_congestion_control"]="bbr"
-    ["net.core.somaxconn"]="1024"
-    ["net.core.netdev_max_backlog"]="1000"
-    ["net.ipv4.tcp_syncookies"]="1"
-    ["net.ipv4.tcp_tw_reuse"]="1"
-    ["net.ipv4.ip_forward"]="1"
-    ["vm.swappiness"]="30"
-    ["vm.vfs_cache_pressure"]="100"
-    ["vm.dirty_background_ratio"]="5"
-    ["vm.dirty_ratio"]="15"
-)
-
-for key in "${!KERNEL_OPTS[@]}"; do
-    apply_sysctl_optimization "$key" "${KERNEL_OPTS[$key]}"
-done
-
-sysctl -p >/dev/null 2>&1 || true
-print_success "Оптимизации ядра применены"
+# Применяем максимальные оптимизации (только если еще не применены)
+apply_max_performance_optimizations
 
 # =============== SWAP ===============
 print_step "Настройка swap-файла"
@@ -223,7 +275,12 @@ if ! swapon --show | grep -q '/swapfile'; then
     chmod 600 /swapfile
     mkswap /swapfile >/dev/null
     swapon /swapfile
-    echo '/swapfile none swap sw 0 0' >> /etc/fstab
+    
+    # Добавляем в fstab только если еще не добавлен
+    if ! grep -q '/swapfile' /etc/fstab; then
+        echo '/swapfile none swap sw 0 0' >> /etc/fstab
+    fi
+    
     print_success "Swap ${SWAP_SIZE_MB} МБ успешно создан"
 else
     print_success "Swap уже активен"
@@ -261,7 +318,10 @@ fi
 print_step "Настройка Fail2Ban"
 SSH_PORT=$(grep -Po '^Port \K\d+' /etc/ssh/sshd_config 2>/dev/null || echo 22)
 mkdir -p /etc/fail2ban/jail.d
-cat > /etc/fail2ban/jail.d/sshd.local <<EOF
+
+# Создаем конфиг только если его нет или он не содержит наших настроек
+if [ ! -f /etc/fail2ban/jail.d/sshd.local ] || ! grep -q "maxretry = 5" /etc/fail2ban/jail.d/sshd.local; then
+    cat > /etc/fail2ban/jail.d/sshd.local <<EOF
 [sshd]
 enabled = true
 port = $SSH_PORT
@@ -272,8 +332,11 @@ findtime = 10m
 backend = systemd
 action = %(action_)s
 EOF
-systemctl restart fail2ban 2>/dev/null || true
-print_success "Fail2Ban настроен: защищает SSH (порт $SSH_PORT)"
+    systemctl restart fail2ban 2>/dev/null || true
+    print_success "Fail2Ban настроен: защищает SSH (порт $SSH_PORT)"
+else
+    print_info "Fail2Ban уже настроен"
+fi
 
 # =============== ФИНАЛЬНАЯ СВОДКА ===============
 printf '\033c'
@@ -285,7 +348,7 @@ print_success "TRIM для SSD: $(grep -q 'discard' /etc/fstab && echo "вклю
 print_success "BBR: $(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo "неизвестно")"
 
 if [ -z "$SSH_CLIENT" ]; then
-    EXTERNAL_IP=$(curl -s https://api.ipify.org 2>/dev/null || echo "неизвестен")
+    EXTERNAL_IP=$(curl -s https://api.ipify.org   2>/dev/null || echo "неизвестен")
     print_info "Внешний IP сервера: $EXTERNAL_IP"
 fi
 
@@ -332,9 +395,9 @@ else
     print_error "UFW: НЕ АКТИВЕН"
 fi
 
-# Очистка резервных копий
-rm -rf /root/backup_2025* 2>/dev/null || true
-print_info "Резервные копии скрипта удалены."
+# Очистка старых резервных копий (оставляем только последнюю)
+find /root -maxdepth 1 -name "backup_20*" -type d | sort -r | tail -n +2 | xargs rm -rf 2>/dev/null || true
+print_info "Старые резервные копии удалены. Последняя копия сохранена."
 
 # Перезагрузка?
 if [ -f /var/run/reboot-required ]; then
