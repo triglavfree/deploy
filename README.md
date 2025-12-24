@@ -18,6 +18,34 @@ curl -qL https://www.npmjs.com/install.sh | sh
 ```bash
 npm install -g @qwen-code/qwen-code@latest
 ```
+<details>
+<summary> добавить MCP сервер Context7</summary>
+
+- Откройте файл настроек Qwen Coder. Он находится в `~/.qwen/settings.json`
+```bash
+nano ~/.qwen/settings.json
+```
+- Добавьте в него конфигурацию для Context7:
+```json
+{
+  "mcpServers": {
+    "context7": {
+      "httpUrl": "https://mcp.context7.com/mcp",
+      "headers": {
+        "CONTEXT7_API_KEY": "YOUR_API_KEY",
+        "Accept": "application/json, text/event-stream"
+      }
+    }
+  }
+}
+```
+- В консоли QWEN-CODE выполните
+```bash
+ /mcp list
+```
+
+</details>
+
 ---
 ### WG-EASY + Caddy
 ```bash
