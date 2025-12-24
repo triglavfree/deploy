@@ -37,13 +37,11 @@ apply_max_performance_optimizations() {
     local config_file="/etc/sysctl.d/99-max-performance.conf"
     local needs_update=false
     
-    # Проверяем, существует ли файл и содержит ли он наши параметры
+    # Проверяем, существует ли файл и содержит ли он BBR-настройку
     if [ ! -f "$config_file" ]; then
         needs_update=true
     else
-        # Проверяем наличие ключевых параметров
-        if ! grep -q "net.ipv4.tcp_congestion_control = bbr" "$config_file" || \
-           ! grep -q "vm.swappiness = 30" "$config_file"; then
+        if ! grep -q "net.ipv4.tcp_congestion_control = bbr" "$config_file"; then
             needs_update=true
         fi
     fi
@@ -52,62 +50,90 @@ apply_max_performance_optimizations() {
         print_info "Применение максимальных оптимизаций ядра..."
         mkdir -p /etc/sysctl.d
         
+        # === КРИТИЧЕСКИ ВАЖНО: загружаем модуль tcp_bbr ===
+        if ! lsmod | grep -q "tcp_bbr"; then
+            if modprobe tcp_bbr 2>/dev/null; then
+                print_info "Модуль ядра tcp_bbr загружен."
+                # Сохраняем для автозагрузки после перезагрузки
+                echo "tcp_bbr" > /etc/modules-load.d/tcp-bbr.conf
+            else
+                print_warning "Не удалось загрузить модуль tcp_bbr. BBR может не активироваться."
+            fi
+        else
+            print_info "Модуль tcp_bbr уже загружен."
+        fi
+
+        # Записываем полный конфиг
         cat > "$config_file" << 'EOF'
 # BBR congestion control
-net.core.default_qdisc = fq            # Контроллер очереди для BBR
-net.ipv4.tcp_congestion_control = bbr  # Современный алгоритм контроля перегрузки
-net.ipv4.tcp_fastopen = 3              # Ускорение установки соединений
+net.core.default_qdisc = fq               # Контроллер очереди для BBR
+net.ipv4.tcp_congestion_control = bbr     # Современный алгоритм контроля перегрузки
+net.ipv4.tcp_fastopen = 3                 # Ускорение установки соединений
 
 # Сетевые буферы
-net.core.rmem_max = 67108864           # Макс. размер буфера приема (64MB)
-net.core.wmem_max = 67108864           # Макс. размер буфера передачи (64MB)
-net.core.rmem_default = 131072         # Стандартный размер буфера приема
-net.core.wmem_default = 131072         # Стандартный размер буфера передачи
-net.ipv4.tcp_rmem = 4096 87380 67108864 # Динамические буферы приема TCP
-net.ipv4.tcp_wmem = 4096 65536 67108864 # Динамические буферы передачи TCP
+net.core.rmem_max = 67108864              # Макс. размер буфера приема (64MB)
+net.core.wmem_max = 67108864              # Макс. размер буфера передачи (64MB)
+net.core.rmem_default = 131072            # Стандартный размер буфера приема
+net.core.wmem_default = 131072            # Стандартный размер буфера передачи
+net.ipv4.tcp_rmem = 4096 87380 67108864   # Динамические буферы приема TCP
+net.ipv4.tcp_wmem = 4096 65536 67108864   # Динамические буферы передачи TCP
 net.ipv4.tcp_mem = 786432 1048576 1572864 # Память для TCP соединений
 
 # Лимиты подключений
-net.core.somaxconn = 65535             # Макс. длина очереди accept() (65K)
-net.core.netdev_max_backlog = 65536    # Макс. очередь для сетевых устройств
-net.ipv4.tcp_max_syn_backlog = 65536   # Макс. очередь SYN-запросов
-net.ipv4.tcp_max_tw_buckets = 1440000  # Макс. TIME-WAIT бакетов
+net.core.somaxconn = 65535                # Макс. длина очереди accept() (65K)
+net.core.netdev_max_backlog = 65536       # Макс. очередь для сетевых устройств
+net.ipv4.tcp_max_syn_backlog = 65536      # Макс. очередь SYN-запросов
+net.ipv4.tcp_max_tw_buckets = 1440000     # Макс. TIME-WAIT бакетов
 
 # Оптимизация TCP
-net.ipv4.tcp_slow_start_after_idle = 0 # Отключить медленный старт после простоя
-net.ipv4.tcp_synack_retries = 2        # Повторы SYN-ACK (быстрый отказ)
-net.ipv4.tcp_syn_retries = 3           # Повторы SYN (быстрый отказ)
-net.ipv4.tcp_retries2 = 8              # Повторы для установившихся соединений
-net.ipv4.tcp_tw_reuse = 1              # Reuse TIME-WAIT сокетов
-net.ipv4.tcp_fin_timeout = 30          # Таймаут FIN пакетов
+net.ipv4.tcp_slow_start_after_idle = 0    # Отключить медленный старт после простоя
+net.ipv4.tcp_synack_retries = 2           # Повторы SYN-ACK (быстрый отказ)
+net.ipv4.tcp_syn_retries = 3              # Повторы SYN (быстрый отказ)
+net.ipv4.tcp_retries2 = 8                 # Повторы для установившихся соединений
+net.ipv4.tcp_tw_reuse = 1                 # Reuse TIME-WAIT сокетов
+net.ipv4.tcp_fin_timeout = 30             # Таймаут FIN пакетов
 
 # Keepalive настройки
-net.ipv4.tcp_keepalive_time = 300      # Интервал проверки живости (5 мин)
-net.ipv4.tcp_keepalive_probes = 5      # Количество проверок перед разрывом
-net.ipv4.tcp_keepalive_intvl = 15      # Интервал между проверками (15 сек)
+net.ipv4.tcp_keepalive_time = 300         # Интервал проверки живости (5 мин)
+net.ipv4.tcp_keepalive_probes = 5         # Количество проверок перед разрывом
+net.ipv4.tcp_keepalive_intvl = 15         # Интервал между проверками (15 сек)
 
 # Безопасность и стабильность
-net.ipv4.tcp_syncookies = 1            # Защита от SYN-флуд атак
-net.ipv4.ip_forward = 1                # Важно для роутеров/шлюзов
+net.ipv4.tcp_syncookies = 1               # Защита от SYN-флуд атак
+net.ipv4.ip_forward = 1                   # Важно для роутеров/шлюзов
 
 # VM параметры оптимизации памяти
-vm.swappiness = 30                     # Контроль использования swap
-vm.vfs_cache_pressure = 100            # Баланс кэширования
-vm.dirty_background_ratio = 5         # Начинать фоновую запись при 5% dirty
-vm.dirty_ratio = 15                    # Макс. dirty pages перед блокировкой
-vm.overcommit_memory = 1               # Агрессивный overcommit памяти
+vm.swappiness = 30                        # Контроль использования swap
+vm.vfs_cache_pressure = 100               # Баланс кэширования
+vm.dirty_background_ratio = 5             # Начинать фоновую запись при 5% dirty
+vm.dirty_ratio = 15                       # Макс. dirty pages перед блокировкой
+vm.overcommit_memory = 1                  # Агрессивный overcommit памяти
 
 # Дополнительные оптимизации
-fs.file-max = 2097152                  # Макс. количество файловых дескрипторов
-fs.inotify.max_user_watches = 524288   # Макс. наблюдений за файлами
-fs.inotify.max_user_instances = 512    # Макс. экземпляров inotify
+fs.file-max = 2097152                     # Макс. количество файловых дескрипторов
+fs.inotify.max_user_watches = 524288      # Макс. наблюдений за файлами
+fs.inotify.max_user_instances = 512       # Макс. экземпляров inotify
 EOF
 
         # Применяем настройки
         sysctl -p "$config_file" >/dev/null 2>&1 || true
-        print_success "Максимальные оптимизации ядра применены"
+        
+        # Проверяем, что BBR действительно активен
+        if sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null | grep -q "^bbr$"; then
+            print_success "Максимальные оптимизации ядра применены (BBR активен)"
+        else
+            print_warning "Оптимизации применены, но BBR не активен. Проверьте: modprobe tcp_bbr"
+        fi
     else
         print_info "Максимальные оптимизации ядра уже настроены"
+        # На всякий случай убедимся, что модуль загружен
+        if ! lsmod | grep -q "tcp_bbr"; then
+            if modprobe tcp_bbr 2>/dev/null; then
+                echo "tcp_bbr" > /etc/modules-load.d/tcp-bbr.conf
+                sysctl -p "$config_file" >/dev/null 2>&1
+                print_info "Модуль tcp_bbr был загружен дополнительно"
+            fi
+        fi
     fi
 }
 
