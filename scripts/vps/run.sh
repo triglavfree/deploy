@@ -4,7 +4,6 @@ set -e
 # =============== ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ===============
 RECOVERY_USER=""
 RECOVERY_FILE="/root/recovery_info.txt"
-SERVER_IP=
 CURRENT_IP="unknown"
 
 # =============== ЦВЕТА ===============
@@ -198,20 +197,7 @@ check_ssh_access_safety() {
     echo
     print_info "2. Нет ключа? Создайте:"
     print_info "     ssh-keygen -t ed25519 -C \"ваш_email@example.com\""
-    echo
-    print_info "3. Скопируйте ключ на сервер:"
-    if [ -n "$CURRENT_IP" ]; then
-        print_info "     ssh-copy-id root@${CURRENT_IP}"
-    else
-        print_info "     # Узнайте IP сервера и выполните:"
-        if [ -z "$SSH_CLIENT" ]; then
-        EXTERNAL_IP=$(curl -s https://api.ipify.org 2>/dev/null || echo "ВАШ_IP_СЕРВЕРА")
-        print_info "Внешний IP сервера: $EXTERNAL_IP"
-    fi
-
-    fi
-    echo
-    print_info "4. Или вручную: добавьте содержимое .pub в /root/.ssh/authorized_keys"
+    print_info "3. Вручную: добавьте содержимое .pub в /root/.ssh/authorized_keys"
     print_info "   и выполните: chmod 700 /root/.ssh && chmod 600 /root/.ssh/authorized_keys"
     echo
     print_info "🔄 После этого — запустите скрипт снова."
