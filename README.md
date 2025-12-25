@@ -2,7 +2,10 @@
 [![Qwen Code](https://img.shields.io/badge/Qwen_Code-v0.5.2-f8f9fa?logo=github-copilot&logoColor=007ACC&labelColor=white&style=for-the-badge)](https://github.com/QwenLM/qwen-code)
 [![Blitz Panel](https://img.shields.io/badge/Blitz_Panel-2.5.0-f8f9fa?label=⚡%20Blitz%20Panel&labelColor=white&style=for-the-badge)](https://github.com/ReturnFI/Blitz)
 [![Ubuntu](https://img.shields.io/badge/Ubuntu-24.04_LTS-f8f9fa?logo=ubuntu&logoColor=E95420&labelColor=white&style=for-the-badge)](https://releases.ubuntu.com/24.04/)
-[![n8n](https://img.shields.io/badge/n8n-v2.1.4-f8f9fa?logo=n8n&logoColor=white&labelColor=white&style=for-the-badge)](https://github.com/n8n-io/n8n)
+[![n8n](https://img.shields.io/badge/n8n-v2.1.4-f8f9fa?logo=n8n&logoColor=000000&labelColor=white&style=for-the-badge)](https://github.com/n8n-io/n8n)
+
+
+
 ### Оптимизатор VPS
 ```bash
 curl -fsSL https://raw.githubusercontent.com/triglavfree/deploy/main/scripts/vps/run.sh | sudo -E bash
