@@ -58,7 +58,7 @@ npx n8n
 ```
 
 ---
-### WireGuard Easy
+### WireGuard Easy + Caddy
 ```bash
 curl -fsSL https://raw.githubusercontent.com/triglavfree/deploy/main/scripts/wireguard/install.sh | sudo -E bash
 ```
